@@ -1,9 +1,12 @@
-# reva-governance
+# Reva runtime authorization for Claude Code
 
-A Claude Code plugin that checks every tool call and every submitted prompt against your
-organization's Reva policies — asking Reva's Policy Decision Point whether it's allowed
-**before it runs**, not logging it after the fact. The same governance model Reva enforces
-at the API gateway, brought down to the coding-agent layer.
+A Claude Code plugin that authorizes every tool call and every submitted prompt. Claude Code
+calls it before an action runs; it asks a Reva policy decision point whether the action is
+allowed, and answers allow, ask or block — **before it runs**, not logged after the fact.
+
+The same enforcement Reva applies at the API gateway, brought down to the coding-agent layer.
+
+Plugin id: `reva-governance`, from the `reva-plugins` marketplace.
 
 - [How it works](#how-it-works)
 - [What gets governed](#what-gets-governed)
