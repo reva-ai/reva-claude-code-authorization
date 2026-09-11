@@ -1,3 +1,5 @@
+<img src="assets/reva.svg" alt="Reva" width="44">
+
 # Reva runtime authorization for Claude Code
 
 A Claude Code plugin that authorizes every tool call and every submitted prompt. Claude Code
