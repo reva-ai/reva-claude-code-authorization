@@ -1,0 +1,7 @@
+{
+  "session_id": "sess-abc123",
+  "cwd": "/Users/dev/project",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Edit",
+  "tool_input": { "file_path": "/Users/dev/project/src/config.ts" }
+}

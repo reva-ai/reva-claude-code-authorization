@@ -1,0 +1,56 @@
+{
+  "name": "reva-governance",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reva Cedar-based authorization gateway for every Claude Code tool call and prompt",
+  "license": "Apache-2.0",
+  "author": "Reva.AI",
+  "homepage": "https://github.com/reva-ai/reva-claude-code-authorization#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/reva-ai/reva-claude-code-authorization.git"
+  },
+  "bugs": {
+    "url": "https://github.com/reva-ai/reva-claude-code-authorization/issues"
+  },
+  "keywords": [
+    "claude-code",
+    "claude-code-plugin",
+    "anthropic",
+    "coding-agent",
+    "authorization",
+    "access-control",
+    "cedar-policy",
+    "policy-enforcement",
+    "ai-security",
+    "agent-security",
+    "guardrails",
+    "reva"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "dist",
+    "src",
+    "hooks",
+    "scripts",
+    "docs",
+    ".claude-plugin",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "SECURITY.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "postinstall": "npm run build",
+    "test": "npm run build && node --test dist/test/*.test.js",
+    "mock-pdp": "node scripts/mock-pdp-server.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.4"
+  }
+}

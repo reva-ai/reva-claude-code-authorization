@@ -1,0 +1,10 @@
+{
+  "session_id": "sess-abc123",
+  "cwd": "/Users/dev/project",
+  "hook_event_name": "PostToolUse",
+  "tool_name": "Edit",
+  "tool_input": { "file_path": "/Users/dev/project/src/config.ts" },
+  "tool_response": { "filePath": "/Users/dev/project/src/config.ts", "success": true },
+  "tool_use_id": "toolu_01ABC123",
+  "duration_ms": 12
+}

@@ -1,0 +1,7 @@
+{
+  "session_id": "sess-abc123",
+  "cwd": "/Users/dev/project",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "mcp__github__search_repositories",
+  "tool_input": { "query": "anthropic", "sort": "stars" }
+}

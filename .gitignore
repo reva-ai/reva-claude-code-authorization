@@ -1,0 +1,12 @@
+node_modules/
+.env
+*.log
+.DS_Store
+.idea/
+
+# Local AI-assistant scratch files, kept out of a public repository.
+.cursor/
+.cursorignore
+.cursorindexingignore
+findings/
+AGENTS.md

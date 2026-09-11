@@ -1,0 +1,6 @@
+{
+  "session_id": "sess-abc123",
+  "cwd": "/Users/dev/project",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "Add a login form to the app"
+}
