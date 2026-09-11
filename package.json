@@ -2,7 +2,7 @@
   "name": "reva-governance",
   "version": "1.0.0",
   "private": true,
-  "description": "Reva Cedar-based authorization gateway for every Claude Code tool call and prompt",
+  "description": "Authorizes every Claude Code tool call and prompt against your organization's Reva policies before it runs",
   "license": "Apache-2.0",
   "author": "Reva.AI",
   "homepage": "https://github.com/reva-ai/reva-claude-code-authorization#readme",

@@ -3,12 +3,12 @@
   "owner": {
     "name": "Reva AI"
   },
-  "description": "Reva governance plugins for AI coding agents",
+  "description": "Reva authorization plugins for AI coding agents",
   "plugins": [
     {
       "name": "reva-governance",
       "source": "./",
-      "description": "Reva Cedar-based authorization gateway — every Claude Code tool call and prompt is checked against the Reva PDP before it runs"
+      "description": "Authorizes every Claude Code tool call and prompt against your organization's Reva policies before it runs"
     }
   ]
 }

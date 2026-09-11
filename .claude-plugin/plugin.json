@@ -1,7 +1,7 @@
 {
   "name": "reva-governance",
   "version": "1.0.0",
-  "description": "Reva Cedar-based authorization gateway \u2014 every Claude Code tool call and prompt is checked against the Reva PDP before it runs",
+  "description": "Authorizes every Claude Code tool call and prompt against your organization's Reva policies before it runs",
   "author": {
     "name": "Reva AI"
   },
@@ -9,7 +9,7 @@
     "auth_token": {
       "type": "string",
       "title": "Reva Auth Token",
-      "description": "Authenticates every request this plugin makes to Reva \u2014 PDP evaluation (every tool call and prompt) and entity ingestion at session start. Issued by Reva for your tenant.",
+      "description": "Authenticates every request this plugin makes to Reva — PDP evaluation (every tool call and prompt) and entity ingestion at session start. Issued by Reva for your tenant.",
       "sensitive": true,
       "required": true
     },
