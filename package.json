@@ -47,7 +47,8 @@
     "build": "tsc -p tsconfig.json",
     "postinstall": "npm run build",
     "test": "npm run build && node --test dist/test/*.test.js",
-    "mock-pdp": "node scripts/mock-pdp-server.mjs"
+    "mock-pdp": "node scripts/mock-pdp-server.mjs",
+    "package": "npm run build && zip -r reva-claude-code-authorization.plugin . -x './.git/*' -x './node_modules/*' -x '*.DS_Store'"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
