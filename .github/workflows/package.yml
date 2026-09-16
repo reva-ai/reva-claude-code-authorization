@@ -5,9 +5,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   package:
-    name: Build and Package Plugin
+    name: Build and Release Plugin
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -26,15 +29,27 @@ jobs:
       - name: Create .plugin package
         run: |
           # Package the codebase as a zip-compatible archive with .plugin extension,
-          # excluding git metadata and temporary build-time node_modules
+          # excluding git metadata, build-time node_modules, and .DS_Store
           zip -r reva-claude-code-authorization.plugin . \
             -x "./.git/*" \
             -x "./node_modules/*" \
             -x "*.DS_Store"
 
-      - name: Upload .plugin artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: reva-claude-code-authorization.plugin
-          path: reva-claude-code-authorization.plugin
-          if-no-files-found: error
+      - name: Publish to GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # If the 'latest' release does not exist yet, create it with the plugin asset
+          if ! gh release view latest >/dev/null 2>&1; then
+            gh release create latest reva-claude-code-authorization.plugin \
+              --title "Reva Claude Code Authorization Plugin" \
+              --notes "Latest release of reva-claude-code-authorization.plugin from main branch" \
+              --latest
+          else
+            # Update target commit to current commit and upload/replace the asset
+            gh release edit latest --target "$GITHUB_SHA" || true
+            gh release upload latest reva-claude-code-authorization.plugin --clobber
+          fi
+
+          echo "Plugin successfully published to GitHub Release!"
+          echo "Direct Download URL: https://github.com/${{ github.repository }}/releases/latest/download/reva-claude-code-authorization.plugin" >> $GITHUB_STEP_SUMMARY
