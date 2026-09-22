@@ -1,10 +1,45 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.osAttribute = osAttribute;
 exports.buildActionContext = buildActionContext;
 exports.buildInvokeAgentContext = buildInvokeAgentContext;
 exports.buildTransmission = buildTransmission;
 exports.serializeToolResponse = serializeToolResponse;
 exports.buildToolResponseTransmission = buildToolResponseTransmission;
+const nodeOs = __importStar(require("node:os"));
 const ingestionClient_1 = require("./ingestionClient");
 function activeTurnEvidence(extras) {
     const messages = extras.conversationMessages || [];
@@ -15,6 +50,16 @@ function activeTurnEvidence(extras) {
         ...(messages.length > 0 ? { conversation: { messages } } : {}),
     };
 }
+// Exported (with an injectable platform, defaulting to the real one) so
+// tests can cover the mapping directly without mocking node:os — same
+// pattern config.ts's loadConfig(env = process.env) uses.
+function osAttribute(platform = nodeOs.platform()) {
+    if (platform === 'win32')
+        return 'Windows';
+    if (platform === 'darwin')
+        return 'macOS';
+    return 'Linux';
+}
 function activeSessionFields(extras) {
     return {
         activeSessionCount: extras.activeSessionCount ?? 0,
@@ -22,6 +67,8 @@ function activeSessionFields(extras) {
         sessionEntryPoint: extras.currentSession?.entrypoint ?? '',
         sessionLastSeen: extras.currentSession?.lastSeen ?? 0,
         agentType: ingestionClient_1.AGENT_TYPE,
+        machineId: extras.machineId ?? '',
+        os: osAttribute(),
     };
 }
 function buildActionContext(mapping, extras = {}) {
@@ -45,8 +92,8 @@ function buildActionContext(mapping, extras = {}) {
             return { timestamp, ...evidence, ...sessions };
     }
 }
-function buildInvokeAgentContext(activeSessionCount = 0, currentSession) {
-    return { timestamp: Date.now(), hops: [], ...activeSessionFields({ activeSessionCount, currentSession }) };
+function buildInvokeAgentContext(activeSessionCount = 0, currentSession, machineId) {
+    return { timestamp: Date.now(), hops: [], ...activeSessionFields({ activeSessionCount, currentSession, machineId }) };
 }
 // `role`/`contentType`/`promptKey` are constants here — Claude Code doesn't
 // expose a multi-role or multi-content-type concept at the hook level, only
@@ -67,7 +114,7 @@ function serializeToolResponse(toolResponse) {
 }
 // PostToolUse: the tool has already returned, so transmission carries that
 // result (role "tool") instead of the user prompt. context no longer
-// carries a `prompt` field at all — that's now PDP-managed, not client-set.
+// carries a `prompt` field at all — that's now RTG-managed, not client-set.
 function buildToolResponseTransmission(toolResponse, nonblankFallback) {
     const content = serializeToolResponse(toolResponse);
     const transmission = buildTransmission(content, 'tool', nonblankFallback);

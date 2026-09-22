@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Tiny local stand-in for the Reva PDP + ingestion API, for exercising the
+// Tiny local stand-in for the Reva RTG + ingestion API, for exercising the
 // plugin end-to-end without hitting the real endpoints. Evaluation calls
 // honor MOCK_HTTP_STATUS (default 200) so you can drive the plugin's
 // 200/403/401/5xx matrix. Ingestion calls are just logged and acknowledged.
@@ -8,7 +8,7 @@
 // here without ever being written to this log or console.
 import http from 'node:http';
 
-const PORT = process.env.MOCK_PDP_PORT || 8787;
+const PORT = process.env.MOCK_RTG_PORT || 8787;
 const DECISION = process.env.MOCK_DECISION || 'allow'; // allow | deny (200 remains authoritative allow to the plugin)
 const HTTP_STATUS = Number(process.env.MOCK_HTTP_STATUS || 200);
 const ERROR_TYPE = process.env.MOCK_ERROR_TYPE; // USER_DISABLED | USER_NOT_FOUND | engine/service type
@@ -43,8 +43,28 @@ function evaluationReply(res) {
     res.end(JSON.stringify({ context: { reason: 'Denied by mock governance policy' } }));
     return;
   }
+  if (HTTP_STATUS === 413) {
+    const errorType = ERROR_TYPE || 'PAYLOAD_TOO_LARGE';
+    console.log('responding with HTTP 413 error_type:', errorType);
+    res.writeHead(413, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error_type: errorType }));
+    return;
+  }
+  if (HTTP_STATUS === 424) {
+    const errorType = ERROR_TYPE || 'FAILED_DEPENDENCY';
+    console.log('responding with HTTP 424 error_type:', errorType);
+    res.writeHead(424, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error_type: errorType }));
+    return;
+  }
+  if (HTTP_STATUS === 429) {
+    console.log('responding with HTTP 429');
+    res.writeHead(429, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ context: { reason: 'Rate limited by mock RTG' } }));
+    return;
+  }
   if (HTTP_STATUS >= 500 && HTTP_STATUS < 600) {
-    const errorType = ERROR_TYPE || 'PDP_SERVER_ERROR';
+    const errorType = ERROR_TYPE || 'RTG_SERVER_ERROR';
     console.log(`responding with HTTP ${HTTP_STATUS} error_type:`, errorType);
     res.writeHead(HTTP_STATUS, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error_type: errorType }));
@@ -140,16 +160,22 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    // Real Reva backend route — kept as /pdp/v2/... regardless of internal
+    // RTG naming, since this has to match what the client actually requests
+    // (config.ts's RTG_PATH is deliberately not renamed either — see there).
     if (url.pathname === '/pdp/v2/ai/evaluation' && req.method === 'POST') {
-      console.log('\n--- Reva mock PDP received a direct-AI request ---');
+      console.log('\n--- Reva mock RTG received a direct-AI request ---');
       console.log('headers:', JSON.stringify(redactedHeaders(req)));
       console.log('body:', JSON.stringify(parsed, null, 2));
       evaluationReply(res);
       return;
     }
 
+    // Unreachable from any current client code (the principal/exists check
+    // was removed — see ingestionClient.ts's own comment) — kept as a mock
+    // stub with its real backend path, same reasoning as the route above.
     if (url.pathname === '/pdp/access/v1/principal/exists' && req.method === 'POST') {
-      console.log('\n--- Reva mock PDP: POST /pdp/access/v1/principal/exists ---');
+      console.log('\n--- Reva mock RTG: POST /pdp/access/v1/principal/exists ---');
       console.log('headers:', JSON.stringify(redactedHeaders(req)));
       console.log('body:', JSON.stringify(parsed, null, 2));
       if (HTTP_STATUS === 401) {
@@ -172,7 +198,7 @@ const server = http.createServer((req, res) => {
         return;
       }
       if (HTTP_STATUS >= 500 && HTTP_STATUS < 600) {
-        const errorType = ERROR_TYPE || 'PDP_SERVER_ERROR';
+        const errorType = ERROR_TYPE || 'RTG_SERVER_ERROR';
         console.log(`responding with HTTP ${HTTP_STATUS} error_type:`, errorType);
         res.writeHead(HTTP_STATUS, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error_type: errorType }));
@@ -200,7 +226,7 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, () => {
   console.log(
-    `Reva mock PDP + ingestion API listening on http://localhost:${PORT} (HTTP ${HTTP_STATUS}, decision=${DECISION}${
+    `Reva mock RTG + ingestion API listening on http://localhost:${PORT} (HTTP ${HTTP_STATUS}, decision=${DECISION}${
       ERROR_TYPE ? `, error_type=${ERROR_TYPE}` : ''
     })`,
   );

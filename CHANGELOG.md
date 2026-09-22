@@ -5,6 +5,49 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-09-22
+
+Merges the internal 2.x development line into the public repository. See **Version
+numbering** at the end of this entry.
+
+### Added
+
+- Chat/Cowork scope isolation (`src/runtimeScope.ts`): every hook returns without a
+  decision, request, or state change on Desktop's local-agent and remote Cowork runtimes.
+- MCP server discovery and ingestion, from local files rather than `claude mcp list`.
+- A shared MCP server identity so discovery and enforcement name the same server.
+- An RTG circuit breaker: a 401 opens a 4-hour window in which RTG is not called.
+- A `SessionEnd` hook that removes the session from the active-session registry.
+- `REVA_DEBUG=1` now also appends to `debug.log` in the plugin's data directory.
+- `scripts/mock-rtg-server.mjs`, replacing the mock PDP server.
+
+### Changed
+
+- **Operational failures now fail closed.** A 404, 424, 5xx, timeout or unreachable host
+  blocks the action instead of passing through. Only 401 and 413 still fail open.
+- `pdpClient.ts` is now `rtgClient.ts`; the plugin is `reva-security`, display name
+  "Reva Security". The `/pdp/v2/ai/evaluation` route and `REVA_PDP_TIMEOUT_MS` keep their
+  names — they are the backend's and a public config variable respectively.
+- `SessionStart` hook timeout raised from 10s to 30s.
+
+### Fixed
+
+- `SECURITY.md`, `docs/CONFIGURATION.md` and `docs/TROUBLESHOOTING.md` still described the
+  old fail-open behaviour. Corrected, per the rule in `CONTRIBUTING.md`.
+- Three environment variables the plugin reads were undocumented.
+- `package.json` and `.claude-plugin/plugin.json` reported different versions.
+- The `host` install-dialog option, `package.json`'s release metadata and
+  `scripts/check-no-real-identifiers.mjs` were absent from the development line, which
+  predated the `1.0.0` release commit. All three are restored.
+
+### Version numbering
+
+The work in this release was developed on an internal line that numbered itself up to
+`2.28.0`. That numbering is not continued here. This repository is the public series and
+stays on it: `1.0.0` was the first public release, and this is `1.1.0` — a minor release,
+because it adds capability and changes failure behaviour without removing a documented
+configuration surface.
+
 ## [1.0.0] — 2026-09-11
 
 First public release.
@@ -53,4 +96,5 @@ First public release.
 - `src/config.ts` referred to a README "Testing" section that did not exist; it now points
   at `CONTRIBUTING.md`.
 
+[1.1.0]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.1.0
 [1.0.0]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.0.0

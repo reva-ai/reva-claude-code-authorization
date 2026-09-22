@@ -3,7 +3,13 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
-import { getActiveSessionCount, getActiveSessions, getSessionEntry, markSessionActive } from '../src/activeSessions';
+import {
+  getActiveSessionCount,
+  getActiveSessions,
+  getSessionEntry,
+  markSessionActive,
+  markSessionInactive,
+} from '../src/activeSessions';
 
 function withTempDir(fn: (dir: string) => void): void {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reva-governance-active-sessions-'));
@@ -96,8 +102,10 @@ test('a session not seen in over 10 minutes is treated as gone', () => {
     markSessionActive('agent-1', 'sess-fresh', 'cli', dir);
 
     // Hand-write a second, stale entry directly into the same file — this
-    // is what a session looks like after being genuinely abandoned (no
-    // SessionEnd hook exists to clean it up any other way).
+    // is what a session looks like after SessionEnd never fired for it at
+    // all (an abrupt termination — killed process, closed terminal — isn't
+    // guaranteed to trigger it; see markSessionInactive's tests below for
+    // the case where it does).
     const file = cacheFile(dir, 'agent-1');
     const state = JSON.parse(fs.readFileSync(file, 'utf8'));
     state.sessions['sess-stale'] = { entrypoint: 'cli', lastSeen: Date.now() - 11 * 60 * 1000 };
@@ -156,4 +164,55 @@ test('with no pluginDataDir, everything no-ops instead of falling back to a home
 
   // Never created (or re-created) ~/.reva-governance as a side effect.
   assert.equal(fs.existsSync(homeRevaGovernance), existedBefore);
+});
+
+test('markSessionInactive removes a session immediately, not after the 10-minute TTL', () => {
+  withTempDir((dir) => {
+    markSessionActive('agent-1', 'sess-1', 'cli', dir);
+    assert.equal(getActiveSessionCount('agent-1', dir), 1);
+
+    markSessionInactive('agent-1', 'sess-1', dir);
+    assert.equal(getActiveSessionCount('agent-1', dir), 0);
+    assert.equal(getSessionEntry('agent-1', 'sess-1', dir), undefined);
+  });
+});
+
+test('markSessionInactive only removes the given session, leaving others untouched', () => {
+  withTempDir((dir) => {
+    markSessionActive('agent-1', 'sess-1', 'cli', dir);
+    markSessionActive('agent-1', 'sess-2', 'claude-desktop', dir);
+
+    markSessionInactive('agent-1', 'sess-1', dir);
+
+    assert.equal(getActiveSessionCount('agent-1', dir), 1);
+    assert.equal(getSessionEntry('agent-1', 'sess-1', dir), undefined);
+    assert.equal(getSessionEntry('agent-1', 'sess-2', dir)?.entrypoint, 'claude-desktop');
+  });
+});
+
+test('markSessionInactive on a session that was never active, or an empty sessionId, is a harmless no-op', () => {
+  withTempDir((dir) => {
+    markSessionActive('agent-1', 'sess-1', 'cli', dir);
+
+    markSessionInactive('agent-1', 'sess-does-not-exist', dir);
+    markSessionInactive('agent-1', '', dir);
+
+    assert.equal(getActiveSessionCount('agent-1', dir), 1);
+  });
+});
+
+test('markSessionInactive only affects the given Agent, not others', () => {
+  withTempDir((dir) => {
+    markSessionActive('agent-1', 'sess-1', 'cli', dir);
+    markSessionActive('agent-2', 'sess-1', 'cli', dir);
+
+    markSessionInactive('agent-1', 'sess-1', dir);
+
+    assert.equal(getActiveSessionCount('agent-1', dir), 0);
+    assert.equal(getActiveSessionCount('agent-2', dir), 1);
+  });
+});
+
+test('with no pluginDataDir, markSessionInactive is a harmless no-op — must not throw', () => {
+  assert.doesNotThrow(() => markSessionInactive('agent-1', 'sess-1', undefined));
 });

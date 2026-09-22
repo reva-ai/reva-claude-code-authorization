@@ -32,3 +32,9 @@ const session = {
 (0, node_test_1.test)('buildInvokeAgentRequest never fabricates a current prompt', () => {
     strict_1.default.throws(() => (0, invokeAgent_1.buildInvokeAgentRequest)('alice@example.com', 'agent-a', '', session), /nonblank current prompt/);
 });
+(0, node_test_1.test)('buildInvokeAgentRequest threads machineId through to context.machineId', () => {
+    const withId = (0, invokeAgent_1.buildInvokeAgentRequest)('alice@example.com', 'agent-a', 'hello', session, 0, undefined, 'machine-xyz');
+    strict_1.default.equal(withId.context.machineId, 'machine-xyz');
+    const withoutId = (0, invokeAgent_1.buildInvokeAgentRequest)('alice@example.com', 'agent-a', 'hello', session);
+    strict_1.default.equal(withoutId.context.machineId, '');
+});

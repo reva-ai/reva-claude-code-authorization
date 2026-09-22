@@ -4,15 +4,17 @@ const activeSessions_1 = require("./activeSessions");
 const context_1 = require("./context");
 const config_1 = require("./config");
 const debug_1 = require("./debug");
+const deviceId_1 = require("./deviceId");
 const entity_1 = require("./entity");
 const hopChain_1 = require("./hopChain");
 const identity_1 = require("./identity");
 const mapping_1 = require("./mapping");
-const pdpClient_1 = require("./pdpClient");
+const rtgClient_1 = require("./rtgClient");
+const runtimeScope_1 = require("./runtimeScope");
 const stdin_1 = require("./stdin");
 const trace_1 = require("./trace");
 const turnCache_1 = require("./turnCache");
-// PostToolUse fires after the tool has already run. A PDP deny cannot undo
+// PostToolUse fires after the tool has already run. An RTG deny cannot undo
 // it; it surfaces as a top-level decision:"block" so Claude sees the reason
 // next to the tool result. Same fail-closed posture as PreToolUse: unexpected
 // errors still block further work rather than exiting non-zero (which Claude
@@ -24,7 +26,7 @@ function writeDecision(result) {
     else if (result.decision === 'deny') {
         process.stdout.write(JSON.stringify({
             decision: 'block',
-            reason: result.reason || 'Blocked by Reva governance policy',
+            reason: result.reason || "Blocked by your organization's security policy.",
         }));
     }
     else if (result.decision === 'ask') {
@@ -38,6 +40,8 @@ function writeDecision(result) {
     process.exit(0);
 }
 async function main() {
+    if ((0, runtimeScope_1.skipOutsideCodeScope)())
+        return;
     const raw = await (0, stdin_1.readStdin)();
     const input = JSON.parse(raw);
     const cfg = (0, config_1.loadConfig)();
@@ -76,6 +80,7 @@ async function main() {
             conversationMessages: (0, turnCache_1.conversationFromTurn)(turn),
             activeSessionCount,
             currentSession,
+            machineId: (0, deviceId_1.resolveMachineId)(pluginDataDir),
         }),
         // The tool result lives here — not in closed Cedar context — so the
         // evaluate payload carries the actual response without a schema change.
@@ -83,7 +88,7 @@ async function main() {
         session: (0, turnCache_1.directSessionFromTurn)(input.session_id, turn),
     };
     (0, debug_1.debugLog)(`-> post ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}, hops=${hops.length})`);
-    const result = await (0, pdpClient_1.evaluate)(cfg, request, traceparent);
+    const result = await (0, rtgClient_1.evaluate)(cfg, request, traceparent, pluginDataDir);
     (0, debug_1.debugLog)(`<- post decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
     writeDecision(result);
 }

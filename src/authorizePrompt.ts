@@ -1,21 +1,24 @@
 import { getActiveSessionCount, markSessionActive } from './activeSessions';
 import { loadConfig } from './config';
 import { debugLog } from './debug';
+import { resolveMachineId } from './deviceId';
 import { startTurnHops } from './hopChain';
 import { resolveUserEmail } from './identity';
 import { buildInvokeAgentRequest } from './invokeAgent';
-import { evaluate } from './pdpClient';
+import { triggerMcpDiscoveryIfDue } from './mcpIngestionTrigger';
+import { evaluate } from './rtgClient';
+import { skipOutsideCodeScope } from './runtimeScope';
 import { resetSpawnCounter } from './spawnCounter';
 import { readStdin } from './stdin';
 import { buildSessionContext, traceparentHeader } from './trace';
-import { CedarHop, PdpResult, UserPromptSubmitInput } from './types';
+import { CedarHop, RtgResult, UserPromptSubmitInput } from './types';
 import { directSessionFromTurn, startTurn, truncatePrompt } from './turnCache';
 
 // UserPromptSubmit uses a different, binary output schema than PreToolUse
 // (top-level decision:"block" vs hookSpecificOutput.permissionDecision).
 // The direct-AI client is status-authoritative: 200 passes and blocking
 // policy/input statuses return deny.
-function writeDecision(result: PdpResult): never {
+function writeDecision(result: RtgResult): never {
   if (result.inactive) {
     // No output means the Reva hook is inactive and Claude continues with its
     // native behavior; an explicit allow/block would still enforce a choice.
@@ -23,7 +26,7 @@ function writeDecision(result: PdpResult): never {
     process.stdout.write(
       JSON.stringify({
         decision: 'block',
-        reason: result.reason || 'Blocked by Reva governance policy',
+        reason: result.reason || "Blocked by your organization's security policy.",
       }),
     );
   } else if (result.decision === 'ask') {
@@ -42,10 +45,18 @@ function writeDecision(result: PdpResult): never {
 }
 
 async function main(): Promise<void> {
+  if (skipOutsideCodeScope()) return;
   const raw = await readStdin();
   const input: UserPromptSubmitInput = JSON.parse(raw);
   const cfg = loadConfig();
   const pluginDataDir = process.env.CLAUDE_PLUGIN_DATA;
+
+  // Closes the gap between SessionStart's once-per-session discovery pass
+  // and a connector added mid-session: UserPromptSubmit fires every turn,
+  // so re-checking here (throttled to ~15 minutes, see
+  // mcpIngestionTrigger.ts) picks up a new connector well before the next
+  // SessionStart would. A no-op, non-blocking cache read when not yet due.
+  triggerMcpDiscoveryIfDue(input.cwd, pluginDataDir);
 
   const userEmail = resolveUserEmail();
   const prompt = input.prompt ? truncatePrompt(input.prompt) : '';
@@ -79,10 +90,11 @@ async function main(): Promise<void> {
     directSessionFromTurn(input.session_id, turn),
     activeSessionCount,
     currentSession,
+    resolveMachineId(pluginDataDir),
   );
 
   debugLog(`-> invokeAgent as ${userEmail} on Agent:${cfg.agentId}`);
-  const result = await evaluate(cfg, request, traceparent);
+  const result = await evaluate(cfg, request, traceparent, pluginDataDir);
   debugLog(`<- decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
 
   // Record this invokeAgent as the base of this turn's hop chain regardless

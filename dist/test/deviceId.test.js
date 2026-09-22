@@ -127,8 +127,8 @@ function withTempFile(content, fn) {
     });
 });
 (0, node_test_1.test)('readOauthAccountId reads oauthAccount.accountUuid from a ~/.claude.json-shaped file', () => {
-    withTempFile(JSON.stringify({ oauthAccount: { emailAddress: 'unrelated', accountUuid: '666eb509-ea28-44ef-bdd2-295b0432a887' } }), (filePath) => {
-        strict_1.default.equal((0, deviceId_1.readOauthAccountId)(filePath), '666eb509-ea28-44ef-bdd2-295b0432a887');
+    withTempFile(JSON.stringify({ oauthAccount: { emailAddress: 'unrelated', accountUuid: '11111111-1111-4111-8111-111111111111' } }), (filePath) => {
+        strict_1.default.equal((0, deviceId_1.readOauthAccountId)(filePath), '11111111-1111-4111-8111-111111111111');
     });
 });
 (0, node_test_1.test)('readOauthAccountId returns undefined when the file is missing', () => {

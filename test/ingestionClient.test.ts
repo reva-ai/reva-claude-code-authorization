@@ -5,20 +5,21 @@ import * as path from 'node:path';
 import { test } from 'node:test';
 import {
   ingestAgent,
-  ingestMcpServersFromConfig,
+  ingestDiscoveredMcpServers,
   ingestUser,
-  parseMcpListOutput,
-  pollMcpServers,
+  isMcpDiscoveryDue,
+  recordMcpDiscoveryTriggered,
   resolveEntityTypeIds,
 } from '../src/ingestionClient';
+import { DiscoveredMcpServer } from '../src/mcpDiscovery';
 import { RevaConfig } from '../src/types';
 
 const baseCfg: RevaConfig = {
-  pdpUrl: 'https://pdp.test/evaluate',
+  rtgUrl: 'https://rtg.test/evaluate',
   authorization: 'eval-token',
   agentId: 'aa-bb-cc-dd-ee-ff',
   timeoutMs: 1000,
-  ingestionUrl: 'https://pdp.test/ingestion/v2',
+  ingestionUrl: 'https://rtg.test/ingestion/v2',
   ingestionTimeoutMs: 1000,
 };
 
@@ -37,7 +38,7 @@ function withTempDir(fn: (dir: string) => void | Promise<void>): Promise<void> {
   return Promise.resolve(fn(dir)).finally(() => fs.rmSync(dir, { recursive: true, force: true }));
 }
 
-// Matches the shape of a real entity-types response, confirmed live — every
+// Matches a real entity-types response, confirmed live — every
 // entity type shares schemaName "CodingAgent" (the single Cedar namespace),
 // not the "Identity"/"AgenticAI" split originally guessed from the docs.
 // resolveEntityTypeIds matches by `name` alone (see its own comment), so
@@ -66,7 +67,7 @@ test('resolveEntityTypeIds fetches and picks the right ids by name alone, includ
     assert.equal(ids.userEntityTypeId, 'user-type-id');
     assert.equal(ids.agentEntityTypeId, 'agent-type-id');
     assert.equal(ids.mcpServerEntityTypeId, 'mcp-type-id');
-    assert.equal(requestedUrl, 'https://pdp.test/ingestion/v2/policy-store/entity-types');
+    assert.equal(requestedUrl, 'https://rtg.test/ingestion/v2/policy-store/entity-types');
     assert.equal(headers?.['X-API-Token'], 'eval-token');
   });
 });
@@ -91,6 +92,53 @@ test('resolveEntityTypeIds caches after the first successful fetch — no second
       () => resolveEntityTypeIds(baseCfg, dir),
     );
     assert.equal(second.agentEntityTypeId, 'agent-type-id');
+  });
+});
+
+test('resolveEntityTypeIds(forceRefresh=true) re-fetches and replaces the cache even when it was already complete', async () => {
+  await withTempDir(async (dir) => {
+    fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'entity-types', 'catalog.json'),
+      // A fully "complete" cache — the plain (non-forced) path would trust
+      // this and never call fetch at all.
+      JSON.stringify({ userEntityTypeId: 'old-user-id', agentEntityTypeId: 'old-agent-id', mcpServerEntityTypeId: 'old-mcp-id' }),
+      'utf8',
+    );
+
+    let fetchCount = 0;
+    const result = await withFetch(
+      (async () => {
+        fetchCount++;
+        return new Response(JSON.stringify(entityTypesResponse), { status: 200 });
+      }) as any,
+      () => resolveEntityTypeIds(baseCfg, dir, true),
+    );
+
+    assert.equal(fetchCount, 1); // fetched despite a complete cache being present
+    assert.equal(result.userEntityTypeId, 'user-type-id'); // the fresh id, not the old cached one
+    const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
+    assert.equal(cache.userEntityTypeId, 'user-type-id'); // replaced on disk too, not just the return value
+  });
+});
+
+test('resolveEntityTypeIds(forceRefresh=true) falls back to the old cache if the forced fetch itself fails', async () => {
+  await withTempDir(async (dir) => {
+    fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'entity-types', 'catalog.json'),
+      JSON.stringify({ userEntityTypeId: 'old-user-id', agentEntityTypeId: 'old-agent-id', mcpServerEntityTypeId: 'old-mcp-id' }),
+      'utf8',
+    );
+
+    const result = await withFetch(
+      (async () => new Response('server error', { status: 500 })) as any,
+      () => resolveEntityTypeIds(baseCfg, dir, true),
+    );
+
+    // Best-effort: a failed forced refresh degrades to the old (possibly
+    // stale) cache rather than leaving the session with nothing at all.
+    assert.equal(result.userEntityTypeId, 'old-user-id');
   });
 });
 
@@ -180,10 +228,10 @@ test('ingestUser: GET 404 (not found) creates the User with active, registeredMa
 
     assert.equal(calls.length, 2); // GET + POST only — no separate PATCH
     assert.equal(calls[0].method, 'GET');
-    assert.equal(calls[0].url, 'https://pdp.test/ingestion/v2/entity/alice%40example.com?entityTypeId=user-type-id');
+    assert.equal(calls[0].url, 'https://rtg.test/ingestion/v2/entity/alice%40example.com?entityTypeId=user-type-id');
 
     assert.equal(calls[1].method, 'POST');
-    assert.equal(calls[1].url, 'https://pdp.test/ingestion/v2/entity?entityTypeId=user-type-id');
+    assert.equal(calls[1].url, 'https://rtg.test/ingestion/v2/entity?entityTypeId=user-type-id');
     assert.deepEqual(calls[1].body, {
       entityId: 'alice@example.com',
       attributes: [
@@ -229,6 +277,108 @@ test('ingestUser: if the create POST itself fails after a confirmed not-found GE
     // No fallback PATCH after a failed create — the next session's GET will
     // find the User still missing and retry the whole POST again.
     assert.deepEqual(calls, [{ method: 'POST' }]);
+  });
+});
+
+test('ingestUser: a POST failing with "Entity type not found" resets the whole local ingestion cache, not just the entity-type ids', async () => {
+  await withTempDir(async (dir) => {
+    fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'entity-types', 'catalog.json'),
+      JSON.stringify({
+        userEntityTypeId: 'stale-user-id',
+        agentEntityTypeId: 'stale-agent-id',
+        mcpServerEntityTypeId: 'stale-mcp-id',
+        knownMcpServerNames: ['claude.ai Gmail'],
+        lastMcpDiscoveryTriggeredAt: Date.now(),
+      }),
+      'utf8',
+    );
+
+    await withFetch(
+      (async (_url: any, opts: any) => {
+        if (methodOf(opts) === 'GET') return new Response(undefined, { status: 404 });
+        return new Response(
+          JSON.stringify({ key: 'RESOURCE.NOT.FOUND', message: 'Entity type not found', data: 'stale-user-id' }),
+          { status: 404 },
+        );
+      }) as any,
+      () => ingestUser(baseCfg, 'stale-user-id', 'alice@example.com', 'machine-123', 'agent-abc', dir),
+    );
+
+    // Confirmed live: a policy-store migration that reassigns entity-type
+    // ids also leaves the real entities empty under the new ones, so
+    // knownMcpServerNames is just as stale as the ids themselves — a
+    // server marked "known" here may not actually be registered anymore.
+    const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
+    assert.equal(cache.userEntityTypeId, undefined);
+    assert.equal(cache.agentEntityTypeId, undefined);
+    assert.equal(cache.mcpServerEntityTypeId, undefined);
+    assert.equal(cache.knownMcpServerNames, undefined);
+    assert.equal(cache.lastMcpDiscoveryTriggeredAt, undefined);
+  });
+});
+
+// This is the actual recovery behavior confirmed live: not just "the cache
+// gets cleared for next time" (the test above), but a successful retry
+// within this SAME call, once a fresh id is available.
+test('ingestUser: a POST failing with "Entity type not found" retries once, within the same call, using a freshly-resolved id', async () => {
+  await withTempDir(async (dir) => {
+    fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'entity-types', 'catalog.json'),
+      JSON.stringify({ userEntityTypeId: 'stale-user-id', agentEntityTypeId: 'stale-agent-id', mcpServerEntityTypeId: 'stale-mcp-id' }),
+      'utf8',
+    );
+
+    const postEntityTypeIdsUsed: string[] = [];
+    await withFetch(
+      (async (url: any, opts: any) => {
+        if (url.includes('/policy-store/entity-types')) {
+          return new Response(JSON.stringify(entityTypesResponse), { status: 200 }); // the real, current ids
+        }
+        if (methodOf(opts) === 'GET') return new Response(undefined, { status: 404 }); // existence check: not found -> POST
+        const entityTypeId = new URLSearchParams(url.split('?')[1]).get('entityTypeId');
+        postEntityTypeIdsUsed.push(entityTypeId!);
+        if (entityTypeId === 'stale-user-id') {
+          return new Response(
+            JSON.stringify({ key: 'RESOURCE.NOT.FOUND', message: 'Entity type not found', data: 'stale-user-id' }),
+            { status: 404 },
+          );
+        }
+        return new Response(undefined, { status: 201 }); // the retry, with the fresh id, succeeds
+      }) as any,
+      () => ingestUser(baseCfg, 'stale-user-id', 'alice@example.com', 'machine-123', 'agent-abc', dir),
+    );
+
+    // First attempt used the stale id and failed; the retry used the
+    // freshly-resolved id (from entityTypesResponse) and succeeded — both
+    // within this one ingestUser() call, not a second separate invocation.
+    assert.deepEqual(postEntityTypeIdsUsed, ['stale-user-id', 'user-type-id']);
+    const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
+    assert.equal(cache.userEntityTypeId, 'user-type-id'); // cache now holds the fresh id — not cleared, not still stale
+  });
+});
+
+test('ingestUser: a POST failing for an unrelated reason does not invalidate the entity-type cache', async () => {
+  await withTempDir(async (dir) => {
+    fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'entity-types', 'catalog.json'),
+      JSON.stringify({ userEntityTypeId: 'real-user-id', agentEntityTypeId: 'real-agent-id', mcpServerEntityTypeId: 'real-mcp-id' }),
+      'utf8',
+    );
+
+    await withFetch(
+      (async (_url: any, opts: any) => {
+        if (methodOf(opts) === 'GET') return new Response(undefined, { status: 404 });
+        return new Response('conflict', { status: 409 });
+      }) as any,
+      () => ingestUser(baseCfg, 'real-user-id', 'alice@example.com', 'machine-123', 'agent-abc', dir),
+    );
+
+    const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
+    assert.equal(cache.userEntityTypeId, 'real-user-id'); // untouched — a 409 isn't a stale-id signal
   });
 });
 
@@ -328,10 +478,10 @@ test('ingestAgent: GET 404 (not found) creates the Agent with user AND agentType
 
     assert.equal(calls.length, 2); // GET + POST only — no separate PATCH
     assert.equal(calls[0].method, 'GET');
-    assert.equal(calls[0].url, 'https://pdp.test/ingestion/v2/entity/aa-bb-cc-dd-ee-ff?entityTypeId=agent-type-id');
+    assert.equal(calls[0].url, 'https://rtg.test/ingestion/v2/entity/aa-bb-cc-dd-ee-ff?entityTypeId=agent-type-id');
 
     assert.equal(calls[1].method, 'POST');
-    assert.equal(calls[1].url, 'https://pdp.test/ingestion/v2/entity?entityTypeId=agent-type-id');
+    assert.equal(calls[1].url, 'https://rtg.test/ingestion/v2/entity?entityTypeId=agent-type-id');
     assert.deepEqual(calls[1].body, {
       entityId: 'aa-bb-cc-dd-ee-ff',
       attributes: [
@@ -408,6 +558,33 @@ test('ingestAgent: if the create POST itself fails after a confirmed not-found G
   });
 });
 
+test('ingestAgent: a POST failing with "Entity type not found" invalidates the cached entity-type ids too', async () => {
+  await withTempDir(async (dir) => {
+    fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'entity-types', 'catalog.json'),
+      JSON.stringify({ userEntityTypeId: 'stale-user-id', agentEntityTypeId: 'stale-agent-id', mcpServerEntityTypeId: 'stale-mcp-id' }),
+      'utf8',
+    );
+
+    await withFetch(
+      (async (_url: any, opts: any) => {
+        if (methodOf(opts) === 'GET') return new Response(undefined, { status: 404 });
+        return new Response(
+          JSON.stringify({ key: 'RESOURCE.NOT.FOUND', message: 'Entity type not found', data: 'stale-agent-id' }),
+          { status: 404 },
+        );
+      }) as any,
+      () => ingestAgent(baseCfg, 'stale-agent-id', 'aa-bb-cc-dd-ee-ff', 'alice@example.com', dir),
+    );
+
+    const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
+    assert.equal(cache.userEntityTypeId, undefined);
+    assert.equal(cache.agentEntityTypeId, undefined);
+    assert.equal(cache.mcpServerEntityTypeId, undefined);
+  });
+});
+
 test('ingestAgent: an inconclusive existence check skips creation but still attempts the agentType PATCH', async () => {
   await withTempDir(async () => {
     const calls: { method: string }[] = [];
@@ -425,181 +602,268 @@ test('ingestAgent: an inconclusive existence check skips creation but still atte
   });
 });
 
-test('ingestMcpServersFromConfig only ingests entries with a real url, skips stdio entries', async () => {
-  await withTempDir(async (dir) => {
-    fs.writeFileSync(
-      path.join(dir, '.mcp.json'),
-      JSON.stringify({
-        mcpServers: {
-          'remote-server': { url: 'https://example.com/mcp' },
-          'stdio-server': { command: 'npx', args: ['some-mcp-server'] },
-        },
-      }),
-      'utf8',
-    );
+// ingestDiscoveredMcpServers takes an injectable `discover` function in
+// place of the old raw-CLI-string-to-parse callback — mcpDiscovery.ts's own
+// tests cover turning real files into DiscoveredMcpServer[]; these only
+// exercise what happens with that list once discovered.
+function discovering(entries: DiscoveredMcpServer[]): (cwd: string) => DiscoveredMcpServer[] {
+  return () => entries;
+}
 
-    const ingested: string[] = [];
+test('ingestDiscoveredMcpServers ingests every newly-discovered remote server in one bulk POST, skips stdio (no url) entries', async () => {
+  await withTempDir(async (dir) => {
+    let body: any;
     await withFetch(
       (async (url: any, opts: any) => {
         const params = new URLSearchParams(url.split('?')[1]);
         assert.equal(params.get('entityTypeId'), 'mcp-type-id');
-        const body = JSON.parse(opts.body);
-        ingested.push(body.entityId);
-        assert.deepEqual(
-          body.attributes.find((a: any) => a.name === 'baseUrl'),
-          { name: 'baseUrl', value: 'https://example.com/mcp' },
-        );
+        assert.ok(url.includes('/entity/bulk'));
+        body = JSON.parse(opts.body);
         return new Response(undefined, { status: 200 });
       }) as any,
-      () => ingestMcpServersFromConfig(baseCfg, 'mcp-type-id', dir),
+      () =>
+        ingestDiscoveredMcpServers(
+          baseCfg,
+          'mcp-type-id',
+          dir,
+          dir,
+          undefined,
+          undefined,
+          discovering([
+            { name: 'remote-server', url: 'https://example.com/mcp' },
+            { name: 'stdio-server', url: undefined },
+          ]),
+        ),
     );
 
-    assert.deepEqual(ingested, ['remote-server']);
+    assert.equal(body.length, 1);
+    assert.equal(body[0].entityId, 'remote-server');
+    assert.deepEqual(
+      body[0].attributes.find((a: any) => a.name === 'baseUrl'),
+      { name: 'baseUrl', value: 'https://example.com/mcp' },
+    );
   });
 });
 
-test('ingestMcpServersFromConfig does nothing (and does not throw) when .mcp.json is missing', async () => {
+test('ingestDiscoveredMcpServers bundles several newly-discovered remote servers into one bulk POST, not one call each', async () => {
   await withTempDir(async (dir) => {
-    let called = false;
-    await withFetch(
-      (async () => {
-        called = true;
-        return new Response(undefined, { status: 200 });
-      }) as any,
-      () => ingestMcpServersFromConfig(baseCfg, 'mcp-type-id', dir),
-    );
-    assert.equal(called, false);
-  });
-});
-
-test('ingestMcpServersFromConfig does nothing when .mcp.json is malformed JSON', async () => {
-  await withTempDir(async (dir) => {
-    fs.writeFileSync(path.join(dir, '.mcp.json'), '{ not valid json', 'utf8');
-    let called = false;
-    await withFetch(
-      (async () => {
-        called = true;
-        return new Response(undefined, { status: 200 });
-      }) as any,
-      () => ingestMcpServersFromConfig(baseCfg, 'mcp-type-id', dir),
-    );
-    assert.equal(called, false);
-  });
-});
-
-// Real sample from `claude mcp list` output, pasted by the user — the
-// claude.ai connectors (ElevenLabs, Unsplash, Google Drive/Gmail/Calendar)
-// never appear in ~/.claude.json at all, confirmed live, so this CLI output
-// is the only way to see them.
-const REAL_MCP_LIST_OUTPUT = `Checking MCP server health…
-
-claude.ai ElevenLabs: https://api.elevenlabs.io/v1/mcp - ✔ Connected
-claude.ai Unsplash: https://mcp.unsplash.com/mcp - ! Needs authentication
-claude.ai Google Drive: https://drivemcp.googleapis.com/mcp/v1 - ✔ Connected
-claude.ai Gmail: https://gmailmcp.googleapis.com/mcp/v1 - ✔ Connected
-claude.ai Google Calendar: https://calendarmcp.googleapis.com/mcp/v1 - ✔ Connected
-plugin:context7:context7: https://mcp.context7.com/mcp (HTTP) - ✔ Connected
-`;
-
-test('parseMcpListOutput parses every real connector line, skipping the banner and blank lines', () => {
-  const entries = parseMcpListOutput(REAL_MCP_LIST_OUTPUT);
-  assert.deepEqual(entries, [
-    { name: 'claude.ai ElevenLabs', url: 'https://api.elevenlabs.io/v1/mcp' },
-    { name: 'claude.ai Unsplash', url: 'https://mcp.unsplash.com/mcp' },
-    { name: 'claude.ai Google Drive', url: 'https://drivemcp.googleapis.com/mcp/v1' },
-    { name: 'claude.ai Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
-    { name: 'claude.ai Google Calendar', url: 'https://calendarmcp.googleapis.com/mcp/v1' },
-    { name: 'plugin:context7:context7', url: 'https://mcp.context7.com/mcp' },
-  ]);
-});
-
-test('parseMcpListOutput treats a non-URL second token as local/stdio — url left undefined, never fabricated', () => {
-  // Real stdio-server line shape is unconfirmed (none configured on the
-  // machine this was written on) — this only exercises the parser's actual
-  // decision rule: no http(s):// prefix means nothing honest to ingest.
-  const entries = parseMcpListOutput('my-local-server: node - ✔ Connected\n');
-  assert.deepEqual(entries, [{ name: 'my-local-server', url: undefined }]);
-});
-
-test('parseMcpListOutput returns nothing for empty or banner-only output', () => {
-  assert.deepEqual(parseMcpListOutput(''), []);
-  assert.deepEqual(parseMcpListOutput('Checking MCP server health…\n'), []);
-});
-
-test('pollMcpServers ingests every new connector on first run, then skips entirely once due-time has not elapsed', async () => {
-  await withTempDir(async (dir) => {
-    const posted: { entityId: string; body: any }[] = [];
-    await withFetch(
-      (async (url: any, opts: any) => {
-        posted.push({ entityId: JSON.parse(opts.body).entityId, body: JSON.parse(opts.body) });
-        return new Response(undefined, { status: 200 });
-      }) as any,
-      () => pollMcpServers(baseCfg, 'mcp-type-id', dir, () => REAL_MCP_LIST_OUTPUT),
-    );
-
-    // Only the 6 real connectors, all url-bearing — none skipped.
-    assert.equal(posted.length, 6);
-    assert.deepEqual(posted[0].body, {
-      entityId: 'claude.ai ElevenLabs',
-      attributes: [
-        { name: 'description', value: 'MCP server "claude.ai ElevenLabs"' },
-        { name: 'transport', value: 'http' },
-        { name: 'baseUrl', value: 'https://api.elevenlabs.io/v1/mcp' },
-        { name: 'connectionType', value: 'remote' },
-      ],
-      parents: [],
-      children: [],
-    });
-
-    // Second call, immediately after — not due for another ~4h, so the CLI
-    // must not be invoked again (a throw here would prove it was).
-    await pollMcpServers(baseCfg, 'mcp-type-id', dir, () => {
-      throw new Error('should not be called — poll should not be due yet');
-    });
-  });
-});
-
-test('pollMcpServers only ingests names not already known, on a later poll once due', async () => {
-  await withTempDir(async (dir) => {
-    // Prime the cache as if ElevenLabs was already ingested, and force the
-    // throttle open by writing a stale lastMcpServersPolledAt directly.
-    fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
-    fs.writeFileSync(
-      path.join(dir, 'entity-types', 'catalog.json'),
-      JSON.stringify({ lastMcpServersPolledAt: 0, knownMcpServerNames: ['claude.ai ElevenLabs'] }),
-      'utf8',
-    );
-
-    const posted: string[] = [];
+    let callCount = 0;
+    let body: any;
     await withFetch(
       (async (_url: any, opts: any) => {
-        posted.push(JSON.parse(opts.body).entityId);
+        callCount += 1;
+        body = JSON.parse(opts.body);
         return new Response(undefined, { status: 200 });
       }) as any,
-      () => pollMcpServers(baseCfg, 'mcp-type-id', dir, () => REAL_MCP_LIST_OUTPUT),
+      () =>
+        ingestDiscoveredMcpServers(
+          baseCfg,
+          'mcp-type-id',
+          dir,
+          dir,
+          undefined,
+          undefined,
+          discovering([
+            { name: 'server-a', url: 'https://a.example.com/mcp' },
+            { name: 'server-b', url: 'https://b.example.com/mcp' },
+            { name: 'server-c', url: 'https://c.example.com/mcp' },
+          ]),
+        ),
     );
 
-    assert.equal(posted.includes('claude.ai ElevenLabs'), false);
-    assert.equal(posted.length, 5);
+    assert.equal(callCount, 1); // one HTTP call, not three
+    assert.deepEqual(
+      body.map((e: any) => e.entityId),
+      ['server-a', 'server-b', 'server-c'],
+    );
   });
 });
 
-test('pollMcpServers leaves a failed ingest out of knownMcpServerNames so the next poll retries it', async () => {
+test('ingestDiscoveredMcpServers: a failed bulk POST holds back known-marking for every entry in that batch, not just one', async () => {
   await withTempDir(async (dir) => {
     await withFetch(
       (async () => new Response('server error', { status: 500 })) as any,
-      () => pollMcpServers(baseCfg, 'mcp-type-id', dir, () => 'flaky-server: https://flaky.example.com/mcp - ✔ Connected\n'),
+      () =>
+        ingestDiscoveredMcpServers(
+          baseCfg,
+          'mcp-type-id',
+          dir,
+          dir,
+          undefined,
+          undefined,
+          discovering([
+            { name: 'server-a', url: 'https://a.example.com/mcp' },
+            { name: 'server-b', url: 'https://b.example.com/mcp' },
+          ]),
+        ),
+    );
+
+    const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
+    assert.deepEqual(cache.knownMcpServerNames, []); // neither retried individually — the whole batch retries next session
+  });
+});
+
+// This is the actual failure mode confirmed live: a policy-store/tenant
+// migration reassigns entity-type ids server-side, the plugin's cache still
+// holds the old ones, and every ingestion call starts failing with this
+// exact 404 shape until something invalidates the cache.
+test('ingestDiscoveredMcpServers: a bulk PATCH failing with "Entity type not found" invalidates the cached entity-type ids', async () => {
+  await withTempDir(async (dir) => {
+    fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'entity-types', 'catalog.json'),
+      JSON.stringify({
+        userEntityTypeId: 'stale-user-id',
+        agentEntityTypeId: 'stale-agent-id',
+        mcpServerEntityTypeId: 'stale-mcp-id',
+      }),
+      'utf8',
+    );
+
+    await withFetch(
+      (async () =>
+        new Response(
+          JSON.stringify({ key: 'RESOURCE.NOT.FOUND', message: 'Entity type not found', data: 'stale-user-id' }),
+          { status: 404 },
+        )) as any,
+      () =>
+        ingestDiscoveredMcpServers(
+          baseCfg,
+          'stale-mcp-id',
+          dir,
+          dir,
+          'stale-user-id',
+          'alice@example.com',
+          discovering([{ name: 'my-local-server', url: undefined }]),
+        ),
+    );
+
+    const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
+    assert.equal(cache.userEntityTypeId, undefined);
+    assert.equal(cache.agentEntityTypeId, undefined);
+    assert.equal(cache.mcpServerEntityTypeId, undefined);
+  });
+});
+
+test('ingestDiscoveredMcpServers: a bulk MCPServer POST failing with "Entity type not found" retries once, within the same call, and the server ends up known', async () => {
+  await withTempDir(async (dir) => {
+    fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'entity-types', 'catalog.json'),
+      JSON.stringify({ userEntityTypeId: 'user-type-id', agentEntityTypeId: 'agent-type-id', mcpServerEntityTypeId: 'stale-mcp-id' }),
+      'utf8',
+    );
+
+    const postEntityTypeIdsUsed: string[] = [];
+    await withFetch(
+      (async (url: any, opts: any) => {
+        if (url.includes('/policy-store/entity-types')) {
+          return new Response(JSON.stringify(entityTypesResponse), { status: 200 });
+        }
+        if (methodOf(opts) === 'PATCH') return new Response(undefined, { status: 200 }); // registeredMcpServers, unrelated to this test
+        const entityTypeId = new URLSearchParams(url.split('?')[1]).get('entityTypeId');
+        postEntityTypeIdsUsed.push(entityTypeId!);
+        if (entityTypeId === 'stale-mcp-id') {
+          return new Response(
+            JSON.stringify({ key: 'RESOURCE.NOT.FOUND', message: 'Entity type not found', data: 'stale-mcp-id' }),
+            { status: 404 },
+          );
+        }
+        return new Response(undefined, { status: 201 }); // the retry, with the fresh id, succeeds
+      }) as any,
+      () =>
+        ingestDiscoveredMcpServers(
+          baseCfg,
+          'stale-mcp-id',
+          dir,
+          dir,
+          undefined,
+          undefined,
+          discovering([{ name: 'claude.ai Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' }]),
+        ),
+    );
+
+    assert.deepEqual(postEntityTypeIdsUsed, ['stale-mcp-id', 'mcp-type-id']);
+    const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
+    assert.equal(cache.mcpServerEntityTypeId, 'mcp-type-id'); // fresh id persisted, not stale, not cleared
+    assert.deepEqual(cache.knownMcpServerNames, ['claude.ai Gmail']); // the retry succeeded, so it's genuinely known now
+  });
+});
+
+test('ingestDiscoveredMcpServers runs discovery fresh every call — no throttle, unlike the old CLI-based poll', async () => {
+  await withTempDir(async (dir) => {
+    let discoverCalls = 0;
+    const discover = () => {
+      discoverCalls += 1;
+      return [];
+    };
+    await withFetch(
+      (async () => new Response(undefined, { status: 200 })) as any,
+      async () => {
+        await ingestDiscoveredMcpServers(baseCfg, 'mcp-type-id', dir, dir, undefined, undefined, discover);
+        await ingestDiscoveredMcpServers(baseCfg, 'mcp-type-id', dir, dir, undefined, undefined, discover);
+      },
+    );
+    assert.equal(discoverCalls, 2);
+  });
+});
+
+test('ingestDiscoveredMcpServers only ingests names not already known from an earlier session', async () => {
+  await withTempDir(async (dir) => {
+    fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'entity-types', 'catalog.json'),
+      JSON.stringify({ knownMcpServerNames: ['claude.ai ElevenLabs'] }),
+      'utf8',
+    );
+
+    let posted: string[] = [];
+    await withFetch(
+      (async (_url: any, opts: any) => {
+        posted = JSON.parse(opts.body).map((item: any) => item.entityId);
+        return new Response(undefined, { status: 200 });
+      }) as any,
+      () =>
+        ingestDiscoveredMcpServers(
+          baseCfg,
+          'mcp-type-id',
+          dir,
+          dir,
+          undefined,
+          undefined,
+          discovering([
+            { name: 'claude.ai ElevenLabs', url: 'https://api.elevenlabs.io/v1/mcp' },
+            { name: 'claude.ai Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
+          ]),
+        ),
+    );
+
+    assert.deepEqual(posted, ['claude.ai Gmail']);
+  });
+});
+
+test('ingestDiscoveredMcpServers leaves a failed ingest out of knownMcpServerNames so the next session retries it', async () => {
+  await withTempDir(async (dir) => {
+    await withFetch(
+      (async () => new Response('server error', { status: 500 })) as any,
+      () =>
+        ingestDiscoveredMcpServers(
+          baseCfg,
+          'mcp-type-id',
+          dir,
+          dir,
+          undefined,
+          undefined,
+          discovering([{ name: 'flaky-server', url: 'https://flaky.example.com/mcp' }]),
+        ),
     );
 
     const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
     assert.equal(cache.knownMcpServerNames.includes('flaky-server'), false);
-    // lastMcpServersPolledAt still updates — a poll happened, even though
-    // every ingest in it failed — so this doesn't retry on every session.
-    assert.ok(typeof cache.lastMcpServersPolledAt === 'number');
   });
 });
 
-test('pollMcpServers marks a local/stdio entry (no URL) as known immediately — nothing to retry', async () => {
+test('ingestDiscoveredMcpServers marks a stdio entry (no url) as known immediately — nothing to retry, no network call', async () => {
   await withTempDir(async (dir) => {
     let fetchCalled = false;
     await withFetch(
@@ -607,7 +871,16 @@ test('pollMcpServers marks a local/stdio entry (no URL) as known immediately —
         fetchCalled = true;
         return new Response(undefined, { status: 200 });
       }) as any,
-      () => pollMcpServers(baseCfg, 'mcp-type-id', dir, () => 'my-local-server: node - ✔ Connected\n'),
+      () =>
+        ingestDiscoveredMcpServers(
+          baseCfg,
+          'mcp-type-id',
+          dir,
+          dir,
+          undefined,
+          undefined,
+          discovering([{ name: 'my-local-server', url: undefined }]),
+        ),
     );
 
     assert.equal(fetchCalled, false);
@@ -616,14 +889,229 @@ test('pollMcpServers marks a local/stdio entry (no URL) as known immediately —
   });
 });
 
-test('pollMcpServers does not throw when `claude mcp list` itself fails to run', async () => {
+// This is the real gap confirmed live: a stdio/connector entry used to be
+// marked known unconditionally, even when the registeredMcpServers PATCH
+// was actually attempted (userEntityTypeId/userEmail given) and failed for
+// an unrelated reason (not the stale-entity-type-id signature — that has
+// its own retry path). A single failed bulk call was silently and
+// permanently hiding real servers from the real User entity. Contrast with
+// the test above: no userEntityTypeId/userEmail at all is a deliberate
+// "nothing to attempt" and stays known-immediately; this is a genuine,
+// confirmed failure and must NOT be marked known.
+test('ingestDiscoveredMcpServers does NOT mark a stdio/connector entry known when the registeredMcpServers PATCH was attempted and failed', async () => {
   await withTempDir(async (dir) => {
-    await pollMcpServers(baseCfg, 'mcp-type-id', dir, () => {
-      throw new Error('ENOENT: claude not found');
+    await withFetch(
+      (async () => new Response('server error', { status: 500 })) as any,
+      () =>
+        ingestDiscoveredMcpServers(
+          baseCfg,
+          'mcp-type-id',
+          dir,
+          dir,
+          'user-type-id',
+          'alice@example.com',
+          discovering([{ name: 'claude.ai ElevenLabs', url: undefined }]),
+        ),
+    );
+
+    const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
+    assert.deepEqual(cache.knownMcpServerNames, []); // not known — the next pass will retry it
+  });
+});
+
+test('ingestDiscoveredMcpServers PATCHes registeredMcpServers per name on the SINGLE endpoint, alongside a bulk MCPServer entity POST', async () => {
+  await withTempDir(async (dir) => {
+    const calls: { method: string; url: string; body?: any }[] = [];
+    await withFetch(
+      (async (url: any, opts: any) => {
+        calls.push({ method: methodOf(opts), url, body: opts?.body ? JSON.parse(opts.body) : undefined });
+        return new Response(undefined, { status: 200 });
+      }) as any,
+      () =>
+        ingestDiscoveredMcpServers(
+          baseCfg,
+          'mcp-type-id',
+          dir,
+          dir,
+          'user-type-id',
+          'alice@example.com',
+          discovering([{ name: 'claude.ai Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' }]),
+        ),
+    );
+
+    // One PATCH per name, on /entity/{entityId} — NOT /entity/bulk. The bulk
+    // endpoint is live-confirmed not to honour op:"ADD" as a Set append:
+    // eight ADD ops in one request left the attribute holding one value.
+    const patches = calls.filter((c) => c.method === 'PATCH');
+    assert.equal(patches.length, 1);
+    assert.ok(patches[0].url.includes('/entity/alice%40example.com?entityTypeId=user-type-id'));
+    assert.ok(!patches[0].url.includes('/entity/bulk'), 'must not use the bulk PATCH endpoint for a Set attribute');
+    assert.deepEqual(patches[0].body, {
+      op: 'ADD',
+      path: 'ATTRIBUTE',
+      attributeValue: { name: 'registeredMcpServers', value: 'claude.ai Gmail' },
     });
-    // No cache file at all — the throttle timestamp is only written after a
-    // successful listMcpServers() call, so this correctly retries next time.
-    assert.equal(fs.existsSync(path.join(dir, 'entity-types', 'catalog.json')), false);
+    const posts = calls.filter((c) => c.method === 'POST');
+    assert.equal(posts.length, 1);
+    assert.ok(posts[0].url.includes('/entity/bulk?entityTypeId=mcp-type-id'));
+    assert.equal(posts[0].body.length, 1);
+    assert.equal(posts[0].body[0].entityId, 'claude.ai Gmail');
+  });
+});
+
+test('ingestDiscoveredMcpServers PATCHes registeredMcpServers for a stdio server too, even though it gets no MCPServer entity', async () => {
+  await withTempDir(async (dir) => {
+    const calls: { method: string; body?: any }[] = [];
+    await withFetch(
+      (async (_url: any, opts: any) => {
+        calls.push({ method: methodOf(opts), body: opts?.body ? JSON.parse(opts.body) : undefined });
+        return new Response(undefined, { status: 200 });
+      }) as any,
+      () =>
+        ingestDiscoveredMcpServers(
+          baseCfg,
+          'mcp-type-id',
+          dir,
+          dir,
+          'user-type-id',
+          'alice@example.com',
+          discovering([{ name: 'my-local-server', url: undefined }]),
+        ),
+    );
+
+    // Exactly one call total: the registeredMcpServers PATCH — no POST,
+    // since a stdio server has no baseUrl to give it its own entity.
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].method, 'PATCH');
+    assert.deepEqual(calls[0].body, {
+      op: 'ADD',
+      path: 'ATTRIBUTE',
+      attributeValue: { name: 'registeredMcpServers', value: 'my-local-server' },
+    });
+  });
+});
+
+test('ingestDiscoveredMcpServers never PATCHes registeredMcpServers for a server already known from an earlier session', async () => {
+  await withTempDir(async (dir) => {
+    fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'entity-types', 'catalog.json'),
+      JSON.stringify({ knownMcpServerNames: ['claude.ai Gmail'] }),
+      'utf8',
+    );
+
+    let calls = 0;
+    await withFetch(
+      (async () => {
+        calls += 1;
+        return new Response(undefined, { status: 200 });
+      }) as any,
+      () =>
+        ingestDiscoveredMcpServers(
+          baseCfg,
+          'mcp-type-id',
+          dir,
+          dir,
+          'user-type-id',
+          'alice@example.com',
+          discovering([{ name: 'claude.ai Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' }]),
+        ),
+    );
+
+    assert.equal(calls, 0);
+  });
+});
+
+test('ingestDiscoveredMcpServers without userEntityTypeId/userEmail never attempts registeredMcpServers at all — existing callers are unaffected', async () => {
+  await withTempDir(async (dir) => {
+    const patchCalls: any[] = [];
+    await withFetch(
+      (async (_url: any, opts: any) => {
+        if (methodOf(opts) === 'PATCH') patchCalls.push(opts);
+        return new Response(undefined, { status: 200 });
+      }) as any,
+      () =>
+        ingestDiscoveredMcpServers(
+          baseCfg,
+          'mcp-type-id',
+          dir,
+          dir,
+          undefined,
+          undefined,
+          discovering([{ name: 'claude.ai Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' }]),
+        ),
+    );
+
+    assert.equal(patchCalls.length, 0);
+  });
+});
+
+test('ingestDiscoveredMcpServers still ingests the MCPServer entity even if the registeredMcpServers PATCH fails', async () => {
+  await withTempDir(async (dir) => {
+    const posts: any[] = [];
+    await withFetch(
+      (async (_url: any, opts: any) => {
+        if (methodOf(opts) === 'PATCH') return new Response('server error', { status: 500 });
+        posts.push(...JSON.parse(opts.body));
+        return new Response(undefined, { status: 200 });
+      }) as any,
+      () =>
+        ingestDiscoveredMcpServers(
+          baseCfg,
+          'mcp-type-id',
+          dir,
+          dir,
+          'user-type-id',
+          'alice@example.com',
+          discovering([{ name: 'claude.ai Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' }]),
+        ),
+    );
+
+    // The entity POST is independent of the PATCH and still lands.
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].entityId, 'claude.ai Gmail');
+
+    // But the name is NOT marked known, because its registeredMcpServers
+    // PATCH failed. This is stricter than it used to be, and deliberately
+    // so: marking it known on the POST alone left the User attribute
+    // permanently missing that name with nothing ever retrying it — the
+    // exact failure that emptied registeredMcpServers on a real tenant
+    // while the local cache insisted all fourteen names were done.
+    const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
+    assert.deepEqual(cache.knownMcpServerNames, [], 'a failed PATCH must leave the name retryable');
+  });
+});
+
+test('one name failing its PATCH does not hold back the others in the same pass', async () => {
+  await withTempDir(async (dir) => {
+    // Per-name calls mean per-name outcomes: with the bulk PATCH a single
+    // failure took the whole batch down with it.
+    await withFetch(
+      (async (url: any, opts: any) => {
+        if (methodOf(opts) === 'PATCH' && String(opts.body).includes('bad-server')) {
+          return new Response('server error', { status: 500 });
+        }
+        return new Response(undefined, { status: 200 });
+      }) as any,
+      () =>
+        ingestDiscoveredMcpServers(
+          baseCfg,
+          'mcp-type-id',
+          dir,
+          dir,
+          'user-type-id',
+          'alice@example.com',
+          discovering([
+            { name: 'good-server', url: undefined },
+            { name: 'bad-server', url: undefined },
+            { name: 'other-server', url: undefined },
+          ]),
+        ),
+    );
+
+    const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
+    assert.deepEqual(cache.knownMcpServerNames.sort(), ['good-server', 'other-server']);
+    assert.ok(!cache.knownMcpServerNames.includes('bad-server'), 'the failed one retries next pass');
   });
 });
 
@@ -650,4 +1138,126 @@ test('with no pluginDataDir, nothing persists — no fallback to a home-director
   assert.equal(fetchCount, 2);
 
   assert.equal(fs.existsSync(homeRevaGovernance), existedBefore);
+});
+
+test('isMcpDiscoveryDue is true with no pluginDataDir, and true when nothing has ever been recorded', async () => {
+  await withTempDir(async (dir) => {
+    assert.equal(isMcpDiscoveryDue(undefined), true);
+    assert.equal(isMcpDiscoveryDue(dir), true);
+  });
+});
+
+test('recordMcpDiscoveryTriggered makes isMcpDiscoveryDue false immediately afterward', async () => {
+  await withTempDir(async (dir) => {
+    recordMcpDiscoveryTriggered(dir);
+    assert.equal(isMcpDiscoveryDue(dir), false);
+  });
+});
+
+test('isMcpDiscoveryDue is true again once the recheck interval has elapsed', async () => {
+  await withTempDir(async (dir) => {
+    fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
+    // Hand-write an already-elapsed trigger time, matching this cache
+    // file's own convention, rather than sleeping out a real 15-minute
+    // window in a test.
+    fs.writeFileSync(
+      path.join(dir, 'entity-types', 'catalog.json'),
+      JSON.stringify({ lastMcpDiscoveryTriggeredAt: Date.now() - 16 * 60 * 1000 }),
+      'utf8',
+    );
+    assert.equal(isMcpDiscoveryDue(dir), true);
+  });
+});
+
+test('recordMcpDiscoveryTriggered merges onto the cache rather than clobbering other fields', async () => {
+  await withTempDir(async (dir) => {
+    fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'entity-types', 'catalog.json'),
+      JSON.stringify({ knownMcpServerNames: ['claude.ai Gmail'] }),
+      'utf8',
+    );
+    recordMcpDiscoveryTriggered(dir);
+    const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
+    assert.deepEqual(cache.knownMcpServerNames, ['claude.ai Gmail']);
+    assert.ok(typeof cache.lastMcpDiscoveryTriggeredAt === 'number');
+  });
+});
+
+test('a changed entity-type id clears knownMcpServerNames — a migration must not leave servers stuck "already ingested"', async () => {
+  await withTempDir(async (dir) => {
+    fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
+    // The exact shape observed live after a real migration: ids already
+    // refreshed to the new store, server names still there from the old one.
+    fs.writeFileSync(
+      path.join(dir, 'entity-types', 'catalog.json'),
+      JSON.stringify({
+        userEntityTypeId: 'OLD-user',
+        agentEntityTypeId: 'OLD-agent',
+        mcpServerEntityTypeId: 'OLD-mcp',
+        knownMcpServerNames: ['gmail', 'google-calendar', 'miro'],
+        lastMcpDiscoveryTriggeredAt: 1234,
+        lastMcpInvokeIngestAt: 5678,
+      }),
+      'utf8',
+    );
+
+    await withFetch(
+      (async () =>
+        new Response(
+          JSON.stringify([
+            { id: 'NEW-user', name: 'User' },
+            { id: 'NEW-agent', name: 'Agent' },
+            { id: 'NEW-mcp', name: 'MCPServer' },
+          ]),
+          { status: 200 },
+        )) as any,
+      () => resolveEntityTypeIds(baseCfg, dir, true),
+    );
+
+    const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
+    assert.equal(cache.userEntityTypeId, 'NEW-user');
+    // Everything derived from the dead store is gone, so the next pass
+    // re-ingests all three instead of subtracting them as "already done".
+    assert.equal(cache.knownMcpServerNames, undefined);
+    assert.equal(cache.lastMcpDiscoveryTriggeredAt, undefined);
+    assert.equal(cache.lastMcpInvokeIngestAt, undefined);
+  });
+});
+
+test('an UNCHANGED entity-type id leaves knownMcpServerNames intact — no needless re-ingestion', async () => {
+  await withTempDir(async (dir) => {
+    fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'entity-types', 'catalog.json'),
+      JSON.stringify({
+        userEntityTypeId: 'user-type-id',
+        agentEntityTypeId: 'agent-type-id',
+        mcpServerEntityTypeId: 'mcp-type-id',
+        knownMcpServerNames: ['gmail'],
+      }),
+      'utf8',
+    );
+
+    await withFetch(
+      (async () => new Response(JSON.stringify(entityTypesResponse), { status: 200 })) as any,
+      () => resolveEntityTypeIds(baseCfg, dir, true),
+    );
+
+    const cache = JSON.parse(path.join(dir, 'entity-types', 'catalog.json') && fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
+    assert.deepEqual(cache.knownMcpServerNames, ['gmail'], 'a force-refresh that changes nothing must not wipe the cache');
+  });
+});
+
+test('a first-ever resolve is not mistaken for a migration', async () => {
+  await withTempDir(async (dir) => {
+    // Nothing cached at all — there is no "old" id to have changed from.
+    await withFetch(
+      (async () => new Response(JSON.stringify(entityTypesResponse), { status: 200 })) as any,
+      () => resolveEntityTypeIds(baseCfg, dir, true),
+    );
+    const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
+    assert.equal(cache.userEntityTypeId, 'user-type-id');
+    assert.equal(cache.knownMcpServerNames, undefined);
+  });
 });

@@ -1,7 +1,8 @@
 {
-  "name": "reva-governance",
-  "version": "1.0.0",
-  "description": "Authorizes every Claude Code tool call and prompt against your organization's Reva policies before it runs",
+  "name": "reva-security",
+  "displayName": "Reva Security",
+  "version": "1.1.0",
+  "description": "Reva Security is an enterprise governance plugin that monitors every action taken by AI coding agents. Evaluates each file edit, shell command, MCP tool call, and subagent invocation before execution. Sensitive operations are routed for human approval, and every decision is recorded in a complete audit trail, giving security and engineering leaders full visibility and control.",
   "author": {
     "name": "Reva AI"
   },
@@ -9,7 +10,7 @@
     "auth_token": {
       "type": "string",
       "title": "Reva Auth Token",
-      "description": "Authenticates every request this plugin makes to Reva — PDP evaluation (every tool call and prompt) and entity ingestion at session start. Issued by Reva for your tenant.",
+      "description": "Authenticates every request this plugin makes to Reva — RTG evaluation (every tool call and prompt) and entity ingestion at session start. Issued by Reva for your tenant.",
       "sensitive": true,
       "required": true
     },

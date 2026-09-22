@@ -10,12 +10,14 @@ import * as path from 'node:path';
 // machines doesn't cause cross-machine collisions — the same account logged
 // into two machines just gets two independent local files, each keyed by
 // that same id.
-// SessionStart registers a session; PreToolUse refreshes lastSeen for
-// whichever session is still actually being used, since there's no
-// confirmed SessionEnd hook to know when one truly closes — a session not
+// SessionStart registers a session; PreToolUse/UserPromptSubmit refresh
+// lastSeen for whichever session is still actually being used; SessionEnd
+// (sessionEnd.ts, via markSessionInactive) removes it immediately when it
+// fires. That last one isn't guaranteed to fire on an abrupt termination
+// (killed process, closed terminal) — for exactly that gap, a session not
 // seen in ACTIVE_TTL_MS is treated as gone and pruned outright on the next
-// write, not just filtered out at read time, so this file can't grow
-// unbounded.
+// read or write, not just filtered out at read time, so this file can't
+// grow unbounded even if SessionEnd never runs at all.
 //
 // Deliberately local-only: this has no visibility into other machines, so
 // it can only ever answer "how many sessions on THIS machine," not a true
@@ -100,9 +102,9 @@ export interface ActiveSession {
 // context fields (sessionId/sessionEntryPoint/sessionLastSeen), no separate
 // read needed. Called from SessionStart (first sight of a session) and
 // PreToolUse/UserPromptSubmit (keeps lastSeen current for as long as the
-// session keeps being used — the only signal available, since there's no
-// confirmed hook for a session actually closing). Returns undefined for an
-// empty/missing sessionId — nothing honest to record (avoids a literal
+// session keeps being used). See markSessionInactive below for the
+// counterpart that removes an entry on SessionEnd. Returns undefined for
+// an empty/missing sessionId — nothing honest to record (avoids a literal
 // "undefined" key) or report.
 export function markSessionActive(
   agentId: string,
@@ -137,4 +139,22 @@ export function getActiveSessionCount(agentId: string, pluginDataDir?: string): 
 // earlier in the same tool-call cycle.
 export function getSessionEntry(agentId: string, sessionId: string, pluginDataDir?: string): ActiveSession | undefined {
   return getActiveSessions(agentId, pluginDataDir).find((s) => s.sessionId === sessionId);
+}
+
+// Explicit removal, called from SessionEnd (sessionEnd.ts) when it fires —
+// the one non-TTL way an entry leaves this file. Every termination reason
+// (clear/resume/logout/prompt_input_exit/other) is treated identically:
+// none of them mean this session is still concurrently running, which is
+// all this file tracks. SessionEnd isn't guaranteed to fire on an abrupt
+// termination (killed process, closed terminal) — the TTL above stays as
+// the fallback for exactly that gap; this is just the fast path for a
+// graceful one, so a session doesn't linger as "active" for up to
+// ACTIVE_TTL_MS after it's actually gone.
+export function markSessionInactive(agentId: string, sessionId: string, pluginDataDir?: string): void {
+  if (!sessionId) return;
+  const state = pruneStale(loadState(agentId, pluginDataDir));
+  if (sessionId in state.sessions) {
+    delete state.sessions[sessionId];
+    saveState(agentId, state, pluginDataDir);
+  }
 }

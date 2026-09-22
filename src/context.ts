@@ -1,3 +1,4 @@
+import * as nodeOs from 'node:os';
 import { ActiveSession } from './activeSessions';
 import { AGENT_TYPE } from './ingestionClient';
 import {
@@ -13,11 +14,11 @@ import {
 // field. The direct-AI endpoint projects `conversation` and `hops` out as
 // active-turn evidence before validating the remaining managed context.
 //
-// `prompt` is deliberately NOT sent in `context` — the PDP now manages
+// `prompt` is deliberately NOT sent in `context` — the RTG now manages
 // that field itself (derived server-side from `transmission`) and rejects
 // any request that echoes it back: "invalid Cedar context: managed context
 // field \"prompt\" is reserved for the Reva platform". The prompt/current
-// action content still reaches the PDP, just exclusively via the top-level
+// action content still reaches the RTG, just exclusively via the top-level
 // `transmission` field (see buildTransmission/buildToolResponseTransmission
 // below) rather than duplicated into context. `timestamp` (epoch
 // milliseconds UTC, a Long — Date.now() already is exactly this, no
@@ -55,6 +56,20 @@ import {
 // AGENT_TYPE constant ingestionClient.ts sends as the Agent entity's own
 // agentType attribute (see the comment there for why it's a hardcoded
 // constant, not runtime-detected).
+//
+// os is also sent on every action — "Linux", "Windows", or "macOS", per
+// explicit instruction: all three reported distinctly rather than folding
+// macOS into "Linux" as an earlier version of this file did (on the
+// reasoning that both share the same POSIX shell dialect — true for
+// command syntax, but not what's wanted here).
+//
+// machineId is also sent on every action — this machine's own id (see
+// deviceId.ts's resolveMachineId), the same value PATCH-ADDed to
+// User.registeredMachineIds at ingestion. Unlike os, this can't be computed
+// in here: resolving it needs CLAUDE_PLUGIN_DATA (for the persisted-random-
+// id fallback), which is an infra concern this file otherwise has no
+// reason to know about — so, same as activeSessionCount/currentSession, the
+// caller resolves it and passes the plain value in.
 export interface ActionContextExtras {
   // Cumulative count of subagents spawned so far this session (1 = first
   // spawn) — only meaningful for, and only sent on, the spawn action.
@@ -72,6 +87,10 @@ export interface ActionContextExtras {
   // This request's own session — its id/entrypoint/lastSeen, the same
   // entry markSessionActive() just wrote (or getSessionEntry() read back).
   currentSession?: ActiveSession;
+  // This machine's id (see deviceId.ts's resolveMachineId) — see the
+  // interface-level comment above for why this is passed in, not resolved
+  // here.
+  machineId?: string;
 }
 
 function activeTurnEvidence(extras: ActionContextExtras): Record<string, any> {
@@ -84,6 +103,15 @@ function activeTurnEvidence(extras: ActionContextExtras): Record<string, any> {
   };
 }
 
+// Exported (with an injectable platform, defaulting to the real one) so
+// tests can cover the mapping directly without mocking node:os — same
+// pattern config.ts's loadConfig(env = process.env) uses.
+export function osAttribute(platform: NodeJS.Platform = nodeOs.platform()): 'Linux' | 'Windows' | 'macOS' {
+  if (platform === 'win32') return 'Windows';
+  if (platform === 'darwin') return 'macOS';
+  return 'Linux';
+}
+
 function activeSessionFields(extras: ActionContextExtras): Record<string, any> {
   return {
     activeSessionCount: extras.activeSessionCount ?? 0,
@@ -91,6 +119,8 @@ function activeSessionFields(extras: ActionContextExtras): Record<string, any> {
     sessionEntryPoint: extras.currentSession?.entrypoint ?? '',
     sessionLastSeen: extras.currentSession?.lastSeen ?? 0,
     agentType: AGENT_TYPE,
+    machineId: extras.machineId ?? '',
+    os: osAttribute(),
   };
 }
 
@@ -119,8 +149,12 @@ export function buildActionContext(
   }
 }
 
-export function buildInvokeAgentContext(activeSessionCount = 0, currentSession?: ActiveSession): Record<string, any> {
-  return { timestamp: Date.now(), hops: [], ...activeSessionFields({ activeSessionCount, currentSession }) };
+export function buildInvokeAgentContext(
+  activeSessionCount = 0,
+  currentSession?: ActiveSession,
+  machineId?: string,
+): Record<string, any> {
+  return { timestamp: Date.now(), hops: [], ...activeSessionFields({ activeSessionCount, currentSession, machineId }) };
 }
 
 // `role`/`contentType`/`promptKey` are constants here — Claude Code doesn't
@@ -148,7 +182,7 @@ export function serializeToolResponse(toolResponse: unknown): string {
 
 // PostToolUse: the tool has already returned, so transmission carries that
 // result (role "tool") instead of the user prompt. context no longer
-// carries a `prompt` field at all — that's now PDP-managed, not client-set.
+// carries a `prompt` field at all — that's now RTG-managed, not client-set.
 export function buildToolResponseTransmission(toolResponse: unknown, nonblankFallback: string): DirectEvalTransmission {
   const content = serializeToolResponse(toolResponse);
   const transmission = buildTransmission(content, 'tool', nonblankFallback);

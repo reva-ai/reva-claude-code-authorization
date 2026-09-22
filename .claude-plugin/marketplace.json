@@ -3,12 +3,12 @@
   "owner": {
     "name": "Reva AI"
   },
-  "description": "Reva authorization plugins for AI coding agents",
+  "description": "Reva governance plugins for AI coding agents",
   "plugins": [
     {
-      "name": "reva-governance",
+      "name": "reva-security",
       "source": "./",
-      "description": "Authorizes every Claude Code tool call and prompt against your organization's Reva policies before it runs"
+      "description": "Reva Security is an enterprise governance plugin that monitors every action taken by AI coding agents. Evaluates each file edit, shell command, MCP tool call, and subagent invocation before execution. Sensitive operations are routed for human approval, and every decision is recorded in a complete audit trail, giving security and engineering leaders full visibility and control."
     }
   ]
 }

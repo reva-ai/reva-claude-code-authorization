@@ -24,8 +24,18 @@ const conversationMessages = [
         timestamp: '2026-08-19T10:00:00Z',
     },
 ];
-const CONTEXT_KEYS = ['activeSessionCount', 'sessionId', 'sessionEntryPoint', 'sessionLastSeen', 'agentType', 'hops', 'timestamp'].sort();
-(0, node_test_1.test)('invokeAgent context is timestamp + hops + session scalars + agentType — no prompt (PDP-managed, not client-set)', () => {
+const CONTEXT_KEYS = [
+    'activeSessionCount',
+    'sessionId',
+    'sessionEntryPoint',
+    'sessionLastSeen',
+    'agentType',
+    'machineId',
+    'os',
+    'hops',
+    'timestamp',
+].sort();
+(0, node_test_1.test)('invokeAgent context is timestamp + hops + session scalars + agentType — no prompt (RTG-managed, not client-set)', () => {
     const ctx = (0, context_1.buildInvokeAgentContext)();
     strict_1.default.deepEqual(Object.keys(ctx).sort(), CONTEXT_KEYS);
     strict_1.default.equal('prompt' in ctx, false);
@@ -113,6 +123,20 @@ const CONTEXT_KEYS = ['activeSessionCount', 'sessionId', 'sessionEntryPoint', 's
     strict_1.default.equal(ctx.sessionId, '');
     strict_1.default.equal(ctx.sessionEntryPoint, '');
     strict_1.default.equal(ctx.sessionLastSeen, 0);
+    strict_1.default.equal(ctx.machineId, '');
+});
+(0, node_test_1.test)('machineId is carried through as a plain scalar, on every action, when the caller provides it', () => {
+    const actions = [
+        { actionName: 'invokeTool', resourceType: 'Tool', resourceId: 'WebFetch' },
+        { actionName: 'spawn', resourceType: 'SubAgent', resourceId: 'Explore' },
+        { actionName: 'executeBash', resourceType: 'Directory', resourceId: '/repo', command: 'ls' },
+        { actionName: 'read', resourceType: 'File', resourceId: '/repo/a.ts' },
+        { actionName: 'glob', resourceType: 'Directory', resourceId: '/repo' },
+    ];
+    for (const mapping of actions) {
+        strict_1.default.equal((0, context_1.buildActionContext)(mapping, { machineId: 'machine-xyz' }).machineId, 'machine-xyz');
+    }
+    strict_1.default.equal((0, context_1.buildInvokeAgentContext)(0, undefined, 'machine-xyz').machineId, 'machine-xyz');
 });
 (0, node_test_1.test)('agentType is the constant "ClaudeCode" on every action, not runtime-detected', () => {
     const actions = [
@@ -143,7 +167,7 @@ const CONTEXT_KEYS = ['activeSessionCount', 'sessionId', 'sessionEntryPoint', 's
     }
     strict_1.default.equal(typeof (0, context_1.buildInvokeAgentContext)().timestamp, 'number');
 });
-(0, node_test_1.test)('prompt is never present in context, on any action — it is PDP-managed, not client-set', () => {
+(0, node_test_1.test)('prompt is never present in context, on any action — it is RTG-managed, not client-set', () => {
     const invokeTool = { actionName: 'invokeTool', resourceType: 'Tool', resourceId: 'WebFetch' };
     strict_1.default.equal('prompt' in (0, context_1.buildActionContext)(invokeTool), false);
     const bash = { actionName: 'executeBash', resourceType: 'Directory', resourceId: '/repo', command: 'ls' };
@@ -158,6 +182,19 @@ const CONTEXT_KEYS = ['activeSessionCount', 'sessionId', 'sessionEntryPoint', 's
     const mapping = { actionName: 'spawn', resourceType: 'SubAgent', resourceId: 'Explore' };
     strict_1.default.equal((0, context_1.buildActionContext)(mapping).subagentIndex, 1);
     strict_1.default.equal((0, context_1.buildActionContext)(mapping, { subagentIndex: 4 }).subagentIndex, 4);
+});
+(0, node_test_1.test)('osAttribute reports Windows, macOS, and Linux distinctly — every other Unix-like platform falls back to Linux', () => {
+    strict_1.default.equal((0, context_1.osAttribute)('win32'), 'Windows');
+    strict_1.default.equal((0, context_1.osAttribute)('darwin'), 'macOS');
+    for (const otherUnixLike of ['linux', 'freebsd', 'openbsd', 'aix', 'sunos']) {
+        strict_1.default.equal((0, context_1.osAttribute)(otherUnixLike), 'Linux');
+    }
+});
+(0, node_test_1.test)('os is present on every action, using the real current platform', () => {
+    const mapping = { actionName: 'read', resourceType: 'File', resourceId: '/repo/a.ts' };
+    const expected = (0, context_1.osAttribute)();
+    strict_1.default.equal((0, context_1.buildActionContext)(mapping).os, expected);
+    strict_1.default.equal((0, context_1.buildInvokeAgentContext)().os, expected);
 });
 (0, node_test_1.test)('active-turn evidence uses context.conversation and context.hops with object actions', () => {
     const mapping = { actionName: 'read', resourceType: 'File', resourceId: 'repo/a.ts' };

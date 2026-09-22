@@ -37,6 +37,7 @@ exports.mapToolToCedar = mapToolToCedar;
 const fs = __importStar(require("node:fs"));
 const os = __importStar(require("node:os"));
 const path = __importStar(require("node:path"));
+const mcpServerIdentity_1 = require("./mcpServerIdentity");
 // MultiEdit and NotebookEdit are the same mutation semantics as Edit (batched,
 // or notebook-specific) — grouped under the single "edit" action rather than
 // getting one action each; the original tool name still rides in context.tool.
@@ -112,7 +113,7 @@ function findRepoRoot(startDir) {
 // whose machine or home directory the repo is cloned into — an absolute
 // path like "/Users/alice/repos/domain-services/..." is specific to one
 // person's machine and could never be referenced from a policy meant to
-// apply to every developer with reva-governance installed. Falls back to
+// apply to every developer with this plugin installed. Falls back to
 // the raw absolute path only when no git repo root can be found, or the
 // path falls outside it entirely.
 function toPortableId(absolutePath, cwd) {
@@ -146,7 +147,7 @@ function fileProperties(portableId) {
 function directoryProperties(portableId) {
     return { path: portableId };
 }
-// The PDP expects a FLAT list of every ancestor, not just the immediate
+// The RTG expects a FLAT list of every ancestor, not just the immediate
 // parent — Cedar's `in` needs the whole chain present to match a policy
 // like `resource in Directory::"domain-services"` regardless of how deep
 // the file actually is. No ancestor chain for the absolute-path fallback
@@ -282,16 +283,26 @@ function mapToolToCedar(toolName, toolInput, cwd) {
     }
     if (toolName.startsWith('mcp__')) {
         const parts = toolName.split('__');
-        const server = parts[1] || 'unknown-server';
+        const token = parts[1] || 'unknown-server';
         const tool = parts.slice(2).join('__') || toolName;
+        // The token here is whatever Claude Code embeds in the tool name, which
+        // for a claude.ai connector in the desktop app is a bare uuid
+        // (mcp__d521f7ee-…__search_threads — live-confirmed by invoking Gmail).
+        // Resolve it to the same slug discovery ingests, so the MCPServer parent
+        // below points at an entity that actually exists. Fully fault-tolerant
+        // inside (see mcpServerIdentity.ts): this runs on the PreToolUse path,
+        // where authorize.ts fails CLOSED, so a cache miss or an unreadable
+        // cache must degrade to the raw token and never throw.
+        const server = (0, mcpServerIdentity_1.resolveMcpServerIdentity)(token, process.env.CLAUDE_PLUGIN_DATA);
+        const label = server.displayName || server.slug;
         return {
             actionName: 'invokeTool',
             resourceType: 'Tool',
-            resourceId: `${server}/${tool}`,
+            resourceId: `${server.slug}/${tool}`,
             // name/description are required on Tool; Claude Code's hook input
             // doesn't give us a real description, so this is synthesized.
-            resourceProperties: { name: tool, description: `MCP tool "${tool}" on server "${server}"`, connectionType: 'mcp' },
-            resourceParents: [{ type: 'MCPServer', id: server }],
+            resourceProperties: { name: tool, description: `MCP tool "${tool}" on server "${label}"`, connectionType: 'mcp' },
+            resourceParents: [{ type: 'MCPServer', id: server.slug }],
         };
     }
     // WebFetch, WebSearch, and any other/unrecognized built-in tool — safe

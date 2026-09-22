@@ -1,5 +1,5 @@
 export interface RevaConfig {
-  pdpUrl: string;
+  rtgUrl: string;
   // Sent as the X-API-Token header on BOTH evaluation and ingestion calls —
   // one Reva auth token authenticates everything this plugin does.
   authorization: string;
@@ -65,7 +65,7 @@ export interface DirectEvalEntitySpec extends CedarEntityRef {
   name?: string;
   properties?: Record<string, any>;
   // Request-local Cedar ancestry for ephemeral coding resources that are not
-  // persisted in PDP (files, directories, tools, and subagents).
+  // persisted in RTG (files, directories, tools, and subagents).
   parents?: CedarEntityRef[];
   tool?: string;
   origin?: string;
@@ -74,7 +74,7 @@ export interface DirectEvalEntitySpec extends CedarEntityRef {
 
 // Internal normalized entity description used by the mapping layer. Direct
 // AI requests map attrs and optional ancestry onto the direct entity spec;
-// PDP's stored bare User/Agent entities remain authoritative.
+// RTG's stored bare User/Agent entities remain authoritative.
 export interface CedarEntityDescriptor {
   uid: CedarEntityRef;
   attrs: Record<string, any>;
@@ -107,7 +107,7 @@ export interface DirectEvalTransmission {
   contentType: string;
 }
 
-// Metadata-only sessions are explicitly supported by PDP Edge. The plugin
+// Metadata-only sessions are explicitly supported by RTG Edge. The plugin
 // deliberately omits `messages`: its current hooks do not observe a reliable
 // final assistant response for every completed turn, so adding history would
 // fabricate evidence or create invalid request/response pairs.
@@ -132,21 +132,25 @@ export interface CedarRequest {
   session: DirectEvalSession;
 }
 
-export type PdpDecision = 'allow' | 'deny' | 'ask';
+export type RtgDecision = 'allow' | 'deny' | 'ask';
 
-export interface PdpResult {
-  decision: PdpDecision;
-  // A 401 or operational 5xx disables Reva enforcement for its cooldown.
-  // Hook writers must emit no Claude decision in this state: emitting an
-  // explicit `allow` would bypass Claude Code's own normal permission prompt.
+export interface RtgResult {
+  decision: RtgDecision;
+  // Set only for 401 and 413 (see rtgClient.ts's handleOperationalStatuses)
+  // — the two statuses that still fail open. Hook writers must emit no
+  // Claude decision in this state: emitting an explicit `allow` would
+  // bypass Claude Code's own normal permission prompt. Every other
+  // operational failure (404/424/429/5xx/transport failures) now fails
+  // closed instead — an active `deny` that must reach Claude Code, so
+  // `inactive` is never set alongside those.
   inactive?: boolean;
   reason?: string;
   raw?: any;
-  // Opaque machine-readable error supplied by PDP Edge, or a synthetic
-  // PDP_UNAVAILABLE/PDP_TIMEOUT for transport failures.
+  // Opaque machine-readable error supplied by RTG Edge, or a synthetic
+  // RTG_UNAVAILABLE/RTG_TIMEOUT for a transport failure/timeout.
   errorType?: string;
-  // The actual PDP HTTP status, or synthetic 503/504 for transport/timeout
-  // inactivity. Kept separate from the Claude Code hook decision.
+  // The actual RTG HTTP status, or synthetic 503/504 for a transport
+  // failure/timeout. Kept separate from the Claude Code hook decision.
   status?: number;
 }
 

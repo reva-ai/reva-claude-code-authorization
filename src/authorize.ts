@@ -2,18 +2,21 @@ import { getActiveSessionCount, markSessionActive } from './activeSessions';
 import { buildActionContext, buildTransmission } from './context';
 import { loadConfig } from './config';
 import { debugLog } from './debug';
+import { resolveMachineId } from './deviceId';
 import { buildEntityDescriptor, directSpecOf, refOf } from './entity';
 import { enqueuePendingSpawnLineage, loadAgentHops, resolveSubAgentLineage } from './hopChain';
 import { resolveAgentContext, resolveUserEmail } from './identity';
 import { mapToolToCedar } from './mapping';
-import { evaluate } from './pdpClient';
+import { triggerMcpIngestionForInvokedServer } from './mcpIngestionTrigger';
+import { evaluate } from './rtgClient';
+import { skipOutsideCodeScope } from './runtimeScope';
 import { readStdin } from './stdin';
 import { nextSpawnIndex } from './spawnCounter';
 import { buildSessionContext, buildTraceId, traceparentHeader } from './trace';
-import { CedarEntityDescriptor, CedarHop, CedarRequest, PdpResult, PreToolUseInput } from './types';
+import { CedarEntityDescriptor, CedarHop, CedarRequest, RtgResult, PreToolUseInput } from './types';
 import { conversationFromTurn, directSessionFromTurn, loadOrStartTurn } from './turnCache';
 
-function writeDecision(result: PdpResult): never {
+function writeDecision(result: RtgResult): never {
   if (result.inactive) {
     // True pass-through: no Reva decision. In particular, do not emit
     // permissionDecision:"allow", which would bypass Claude's own prompt.
@@ -27,7 +30,8 @@ function writeDecision(result: PdpResult): never {
     },
   };
   if (permissionDecision === 'deny') {
-    output.hookSpecificOutput.permissionDecisionReason = result.reason || 'Blocked by Reva governance policy';
+    output.hookSpecificOutput.permissionDecisionReason =
+      result.reason || "Blocked by your organization's security policy.";
   } else if (permissionDecision === 'ask') {
     output.hookSpecificOutput.permissionDecisionReason = result.reason || 'Requires manual approval per Reva governance policy';
   }
@@ -36,6 +40,7 @@ function writeDecision(result: PdpResult): never {
 }
 
 async function main(): Promise<void> {
+  if (skipOutsideCodeScope()) return;
   const raw = await readStdin();
   const input: PreToolUseInput = JSON.parse(raw);
   const cfg = loadConfig();
@@ -58,6 +63,19 @@ async function main(): Promise<void> {
 
   const agentCtx = resolveAgentContext(cfg.agentId, input);
   const mapping = mapToolToCedar(input.tool_name, input.tool_input || {}, input.cwd);
+
+  // Ingest-on-invoke — an MCP server being used but not yet ingested gets a
+  // discovery pass triggered now instead of at the next recheck. Wrapped in
+  // its own try/catch on purpose: main()'s catch below fails CLOSED, so an
+  // unexpected throw in this best-effort bookkeeping would DENY a legitimate
+  // tool call. Nothing here is worth blocking a user's work over, so it is
+  // contained and swallowed rather than allowed to reach that handler.
+  try {
+    const mcpServer = (mapping.resourceParents || []).find((parent) => parent.type === 'MCPServer');
+    if (mcpServer) triggerMcpIngestionForInvokedServer(mcpServer.id, input.cwd, pluginDataDir);
+  } catch (err: any) {
+    debugLog(`authorize: ingest-on-invoke skipped — ${err?.message || String(err)}`);
+  }
 
   // Read back the span/session metadata UserPromptSubmit recorded for this
   // turn. If no boundary exists, loadOrStartTurn records this first event as
@@ -119,6 +137,7 @@ async function main(): Promise<void> {
       conversationMessages: conversationFromTurn(turn),
       activeSessionCount,
       currentSession,
+      machineId: resolveMachineId(pluginDataDir),
     }),
     transmission: buildTransmission(currentHopContent, 'assistant', input.tool_name),
     session: directSessionFromTurn(input.session_id, turn),
@@ -144,7 +163,7 @@ async function main(): Promise<void> {
       subagentIndex !== undefined ? `, subagentIndex=${subagentIndex}` : ''
     }, hops=${hops.length})`,
   );
-  const result = await evaluate(cfg, request, traceparent);
+  const result = await evaluate(cfg, request, traceparent, pluginDataDir);
   debugLog(`<- decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
   writeDecision(result);
 }

@@ -37,11 +37,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 const strict_1 = __importDefault(require("node:assert/strict"));
+const node_child_process_1 = require("node:child_process");
 const fs = __importStar(require("node:fs"));
 const os = __importStar(require("node:os"));
 const path = __importStar(require("node:path"));
 const node_test_1 = require("node:test");
+const node_util_1 = require("node:util");
 const spawnCounter_1 = require("../src/spawnCounter");
+const execFileAsync = (0, node_util_1.promisify)(node_child_process_1.execFile);
+const SPAWN_ONCE_SCRIPT = path.join(__dirname, 'support', 'spawnOnce.js');
 function withTempDir(fn) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reva-governance-spawn-'));
     try {
@@ -105,4 +109,19 @@ function withTempDir(fn) {
     strict_1.default.equal((0, spawnCounter_1.nextSpawnIndex)('sess-1', undefined), 1); // still 1 — nothing to increment from
     (0, spawnCounter_1.resetSpawnCounter)('sess-1', undefined); // no-op, must not throw
     strict_1.default.equal(fs.existsSync(homeRevaGovernance), existedBefore);
+});
+(0, node_test_1.test)('concurrent spawns from real, separate processes never produce a duplicate or skipped index', async () => {
+    // Not withTempDir: that helper is synchronous and would rmSync the
+    // directory the moment this callback returns a pending Promise, racing
+    // the very child processes it's supposed to give a workspace to.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reva-governance-spawn-race-'));
+    try {
+        const CONCURRENCY = 12;
+        const results = await Promise.all(Array.from({ length: CONCURRENCY }, () => execFileAsync('node', [SPAWN_ONCE_SCRIPT, 'sess-race', dir])));
+        const indices = results.map((r) => Number(r.stdout)).sort((a, b) => a - b);
+        strict_1.default.deepEqual(indices, Array.from({ length: CONCURRENCY }, (_, i) => i + 1));
+    }
+    finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
 });

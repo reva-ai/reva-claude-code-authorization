@@ -4,7 +4,7 @@
 
 ```bash
 npm ci
-npm test                                   # no network; 169 tests
+npm test                                   # no network; 433 tests
 npm run build                              # dist/ must be committed in sync with src/
 node scripts/check-no-real-identifiers.mjs # nothing real may land in a public repo
 ```
@@ -50,13 +50,13 @@ asserts on an internal helper; the hook contract is what Claude Code depends on.
 
 Authorization controls need a test that shows the control **denying**, not only
 permitting — a test that only checks the happy path would still pass if the control were
-removed. The fail-open/fail-closed split in `pdpClient.ts` is the security-critical part:
+removed. The fail-open/fail-closed split in `rtgClient.ts` is the security-critical part:
 every branch of it has a test, and new branches need one too.
 
-`scripts/mock-pdp-server.mjs` serves a local PDP for manual testing:
+`scripts/mock-rtg-server.mjs` serves a local RTG (and ingestion API) for manual testing:
 
 ```bash
-npm run mock-pdp                 # in one terminal
+npm run mock-rtg                 # in one terminal
 REVA_HOST=localhost:8787 REVA_AUTH_TOKEN=test claude   # in another
 ```
 

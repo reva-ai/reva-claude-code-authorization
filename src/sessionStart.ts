@@ -2,30 +2,38 @@ import { markSessionActive } from './activeSessions';
 import { loadConfig } from './config';
 import { debugLog } from './debug';
 import { resolveAgentId, resolveMachineId } from './deviceId';
-import {
-  ingestAgent,
-  ingestMcpServersFromConfig,
-  ingestUser,
-  pollMcpServers,
-  resolveEntityTypeIds,
-} from './ingestionClient';
+import { ingestAgent, ingestUser, recordMcpDiscoveryTriggered, resolveEntityTypeIds } from './ingestionClient';
 import { resolveUserEmail } from './identity';
+import { spawnMcpIngestion } from './mcpIngestionTrigger';
+import { refreshMcpServerIdentityCache } from './mcpServerIdentity';
+import { skipOutsideCodeScope } from './runtimeScope';
 import { readStdin } from './stdin';
 
 // SessionStart has no blocking/decision control at all (confirmed against
-// Claude Code's docs) — it's context-only. So unlike authorize.ts and
-// authorizePrompt.ts, nothing in this file may ever throw out of main():
-// every ingestion attempt is wrapped so one failure can't stop the next,
-// and the whole function always ends in
-// a clean, silent exit.
+// Claude Code's docs) — but unlike a plain no-op, this hook now
+// deliberately waits for User/Agent ingestion before exiting: Cedar
+// policies that check a STORED registration (e.g. "is this machineId on
+// User.registeredMachineIds") need that PATCH to have already landed on
+// Reva's side, since the request's own inline context.machineId/os only
+// proves what the client claims, not what's on record. resolveEntityTypeIds
+// + ingestUser + ingestAgent are the fast, correctness-critical half of
+// ingestion — User and Agent run concurrently (different entities, no
+// shared writes) rather than one after another, so the worst case here is
+// bounded by the slower of the two, not their sum.
 //
-// User and Agent ingestion both run every session, unconditionally — no
-// local change-detection cache for either. ingestUser()/ingestAgent()
-// (ingestionClient.ts) each do their own GET-then-branch against the
-// ingestion API directly (not the removed PDP-side principal/exists
-// check), so the live GET result is the only source of truth for whether
-// a POST is actually needed — a local "already did this" flag would just
-// go stale the moment the record is deleted/changed on the Reva side.
+// MCP server discovery (ingestMcpServers.ts) is deliberately NOT part of
+// this wait: discovering *what's* configured is fast, file-based, and no
+// longer depends on the `claude` CLI being installed at all (see
+// mcpDiscovery.ts) — but *ingesting* what it finds still means a network
+// call to Reva (now batched into at most one bulk PATCH and one bulk POST
+// per pass — see ingestDiscoveredMcpServers), still not something any
+// known policy here needs before the session can proceed. It's spawned
+// below as a fully detached, unref'd child — after the forced entity-type
+// refresh just above, not before, so that child reads the freshly-
+// replaced cache rather than whatever was there before this session
+// started; still before this process's own remaining blocking work
+// (ingestUser/ingestAgent) so its independent latency overlaps rather
+// than stacks on top of that.
 
 interface SessionStartInput {
   session_id: string;
@@ -34,6 +42,7 @@ interface SessionStartInput {
 }
 
 async function main(): Promise<void> {
+  if (skipOutsideCodeScope()) return;
   const raw = await readStdin();
   const input: SessionStartInput = JSON.parse(raw);
   const pluginDataDir = process.env.CLAUDE_PLUGIN_DATA;
@@ -46,6 +55,24 @@ async function main(): Promise<void> {
   // if neither REVA_AGENT_ID nor an OAuth account is available, there's no
   // honest id to key this local cache by, so tracking is skipped for this
   // session rather than guessing one.
+  // Warm the uuid -> MCP server identity map BEFORE this hook returns, so
+  // the very first tool call of the session already resolves
+  // mcp__<uuid>__<tool> to a real slug. ingestMcpServers.ts refreshes this
+  // too, but it is detached: without this, tool calls racing ahead of that
+  // child emit the raw uuid while later ones emit the slug, putting ONE
+  // connector under two different ids inside a single session's audit
+  // trail. Measured at 66-99ms of purely local file I/O on a real machine
+  // with 27 desktop session files — cheap next to the network calls this
+  // hook already blocks on, and worth it to make the ids consistent.
+  //
+  // Deliberately before loadConfig(): this is local bookkeeping that must
+  // work on a machine with no valid Reva token at all.
+  try {
+    refreshMcpServerIdentityCache(pluginDataDir);
+  } catch (err: any) {
+    debugLog(`sessionStart: MCP server identity refresh failed — continuing (${err?.message || String(err)})`);
+  }
+
   const agentId = process.env.REVA_AGENT_ID || resolveAgentId();
   if (!agentId) {
     debugLog('sessionStart: skipped active-session tracking — no Anthropic account logged in and REVA_AGENT_ID not set');
@@ -62,14 +89,32 @@ async function main(): Promise<void> {
     // expected and common here, since a session can start perfectly well
     // with nothing configured at all yet. Caught below, same as any other
     // best-effort ingestion failure, rather than treated as a special case.
-    // No separate ingestion token/gate: the same auth token that's already
-    // required for evaluation authenticates ingestion too, so ingestion is
-    // attempted whenever the plugin is configured at all.
     const cfg = loadConfig();
+
+    // Forced fresh fetch, replacing whatever's cached, once per session —
+    // plain and simple: rather than only reacting after something has
+    // already failed against a stale cached id (a policy-store/tenant
+    // migration reassigns these ids server-side — see
+    // invalidateStaleIngestionCache's own comment), this makes sure the
+    // ids are never stale to begin with for the rest of this session.
+    // Done BEFORE spawning MCP ingestion below so that detached child
+    // reads the freshly-replaced cache, not whatever was cached before
+    // this session started.
+    const { userEntityTypeId, agentEntityTypeId } = await resolveEntityTypeIds(cfg, pluginDataDir, true);
+
+    // Started before the blocking work below so its own latency overlaps
+    // with it instead of stacking on top of it. Unconditional, every
+    // session — but still records the trigger time (same field a throttled
+    // UserPromptSubmit recheck reads — see mcpIngestionTrigger.ts) so that
+    // recheck doesn't immediately re-trigger on this session's very first
+    // prompt, moments after this same pass just started.
+    spawnMcpIngestion(input.cwd || process.cwd(), pluginDataDir);
+    recordMcpDiscoveryTriggered(pluginDataDir);
+
     const userEmail = resolveUserEmail();
 
     try {
-      const { userEntityTypeId, agentEntityTypeId, mcpServerEntityTypeId } = await resolveEntityTypeIds(cfg, pluginDataDir);
+      const tasks: Promise<void>[] = [];
 
       if (!userEntityTypeId) {
         debugLog('sessionStart: skipped User ingestion — could not resolve entity type id');
@@ -82,8 +127,10 @@ async function main(): Promise<void> {
         // to its Agent(s) via the User.agents attribute — a different
         // relationship than registeredMachineIds, so a different parameter.
         const machineId = resolveMachineId(pluginDataDir);
-        await ingestUser(cfg, userEntityTypeId, userEmail, machineId, cfg.agentId).catch((err) =>
-          debugLog(`sessionStart: ingest User failed — ${err}`),
+        tasks.push(
+          ingestUser(cfg, userEntityTypeId, userEmail, machineId, cfg.agentId, pluginDataDir).catch((err) =>
+            debugLog(`sessionStart: ingest User failed — ${err}`),
+          ),
         );
       }
 
@@ -93,21 +140,17 @@ async function main(): Promise<void> {
         // userEmail here is ALSO sent as an ATTRIBUTE on the Agent entity
         // (a reference back to who's using this machine) — separate from,
         // and in addition to, the direct User ingestion above.
-        await ingestAgent(cfg, agentEntityTypeId, cfg.agentId, userEmail).catch((err) =>
-          debugLog(`sessionStart: ingest Agent failed — ${err}`),
+        tasks.push(
+          ingestAgent(cfg, agentEntityTypeId, cfg.agentId, userEmail, pluginDataDir).catch((err) =>
+            debugLog(`sessionStart: ingest Agent failed — ${err}`),
+          ),
         );
       }
 
-      if (mcpServerEntityTypeId) {
-        await ingestMcpServersFromConfig(cfg, mcpServerEntityTypeId, input.cwd).catch((err) =>
-          debugLog(`sessionStart: ingest MCPServers failed — ${err}`),
-        );
-        // Throttled to once per 4h internally (see pollMcpServers) — safe to
-        // call on every SessionStart, most calls are a no-op cache check.
-        await pollMcpServers(cfg, mcpServerEntityTypeId, pluginDataDir).catch((err) =>
-          debugLog(`sessionStart: poll claude mcp list failed — ${err}`),
-        );
-      }
+      // User and Agent are different entities with no shared writes between
+      // them, so they run concurrently — this process waits for the slower
+      // of the two, not their sum.
+      await Promise.all(tasks);
     } catch (err: any) {
       debugLog(`sessionStart: ingestion error — continuing (${err?.message || String(err)})`);
     }
@@ -115,7 +158,7 @@ async function main(): Promise<void> {
     debugLog(`sessionStart: unexpected error — continuing (${err?.message || String(err)})`);
   }
 
-  process.exit(0); // clean no-op pass-through — no stdout, nothing to block on
+  process.exit(0); // no stdout either way — nothing for Claude Code to act on
 }
 
 main().catch(() => process.exit(0));

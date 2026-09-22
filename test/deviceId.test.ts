@@ -99,9 +99,9 @@ test('readOauthEmail returns undefined for malformed JSON rather than throwing',
 
 test('readOauthAccountId reads oauthAccount.accountUuid from a ~/.claude.json-shaped file', () => {
   withTempFile(
-    JSON.stringify({ oauthAccount: { emailAddress: 'unrelated', accountUuid: '666eb509-ea28-44ef-bdd2-295b0432a887' } }),
+    JSON.stringify({ oauthAccount: { emailAddress: 'unrelated', accountUuid: '11111111-1111-4111-8111-111111111111' } }),
     (filePath) => {
-      assert.equal(readOauthAccountId(filePath), '666eb509-ea28-44ef-bdd2-295b0432a887');
+      assert.equal(readOauthAccountId(filePath), '11111111-1111-4111-8111-111111111111');
     },
   );
 });

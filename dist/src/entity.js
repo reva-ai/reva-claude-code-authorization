@@ -19,7 +19,7 @@ function refOf(descriptor) {
     return { type: descriptor.uid.type, id: descriptor.uid.id };
 }
 // Converts the plugin's internal descriptor into the direct-AI endpoint's
-// entity shape. PDP resolves bare stored identities authoritatively, while
+// entity shape. RTG resolves bare stored identities authoritatively, while
 // optional properties/parents preserve ephemeral coding resources that exist
 // only for the lifetime of a Claude hook request.
 function directSpecOf(descriptor) {

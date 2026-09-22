@@ -237,3 +237,108 @@ test('inside a real repo, a path outside the repo falls back to the absolute pat
     assert.deepEqual(m.resourceParents, []);
   });
 });
+
+// --- MCP server identity resolution at invoke time -------------------------
+// mapToolToCedar reads CLAUDE_PLUGIN_DATA directly (same pattern debug.ts
+// uses) rather than taking it as an argument, so these control it explicitly
+// instead of inheriting whatever the machine running the suite has set.
+function withPluginDataDir(dir: string | undefined, fn: () => void): void {
+  const original = process.env.CLAUDE_PLUGIN_DATA;
+  if (dir === undefined) delete process.env.CLAUDE_PLUGIN_DATA;
+  else process.env.CLAUDE_PLUGIN_DATA = dir;
+  try {
+    fn();
+  } finally {
+    if (original === undefined) delete process.env.CLAUDE_PLUGIN_DATA;
+    else process.env.CLAUDE_PLUGIN_DATA = original;
+  }
+}
+
+function withIdentityCache(entries: Record<string, unknown>, fn: (pluginDataDir: string) => void): void {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reva-governance-mapping-identity-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'mcp-server-identity.json'), JSON.stringify(entries), 'utf8');
+    withPluginDataDir(dir, () => fn(dir));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('a claude.ai connector uuid in the tool name resolves to the slug discovery ingests', () => {
+  // This is the bug this whole change exists for: the desktop app invokes
+  // Gmail as mcp__d521f7ee-…__search_threads (live-confirmed), while
+  // discovery ingested "claude.ai Gmail". Both must now say "gmail", or a
+  // policy on one can never match the other.
+  withIdentityCache(
+    {
+      'd521f7ee-ac86-4efe-a02a-2f155cd06858': {
+        slug: 'gmail',
+        displayName: 'Gmail',
+        url: 'https://gmailmcp.googleapis.com/mcp/v1',
+      },
+    },
+    () => {
+      const m = mapToolToCedar('mcp__d521f7ee-ac86-4efe-a02a-2f155cd06858__search_threads', {}, '/repo');
+      assert.equal(m.resourceId, 'gmail/search_threads');
+      assert.deepEqual(m.resourceParents, [{ type: 'MCPServer', id: 'gmail' }]);
+      // The readable name shows up in the description, so an audit entry
+      // isn't just an opaque id.
+      assert.match(String(m.resourceProperties?.description), /Gmail/);
+    },
+  );
+});
+
+test('an unresolvable uuid falls back to the raw uuid rather than inventing a slug', () => {
+  withIdentityCache({}, () => {
+    const m = mapToolToCedar('mcp__11111111-2222-3333-4444-555555555555__do_thing', {}, '/repo');
+    assert.equal(m.resourceId, '11111111-2222-3333-4444-555555555555/do_thing');
+    assert.deepEqual(m.resourceParents, [{ type: 'MCPServer', id: '11111111-2222-3333-4444-555555555555' }]);
+  });
+});
+
+test('a non-uuid server token is slugged, matching what discovery reports', () => {
+  withPluginDataDir(undefined, () => {
+    assert.equal(mapToolToCedar('mcp__computer-use__screenshot', {}, '/repo').resourceId, 'computer-use/screenshot');
+    // App-provided servers: in no config file, so invocation is the only way
+    // they are ever inventoried. These ids must match what ingest-on-invoke
+    // hands the ingestion child.
+    assert.equal(
+      mapToolToCedar('mcp__Claude_Browser__computer', {}, '/repo').resourceParents?.[0].id,
+      'claude-browser',
+    );
+    assert.equal(
+      mapToolToCedar('mcp__Claude_Code_iOS_Simulator__control', {}, '/repo').resourceParents?.[0].id,
+      'claude-code-ios-simulator',
+    );
+    assert.equal(
+      mapToolToCedar('mcp__claude-in-chrome__computer', {}, '/repo').resourceParents?.[0].id,
+      'claude-in-chrome',
+    );
+    assert.equal(
+      mapToolToCedar('mcp__plugin_context7_context7__get_docs', {}, '/repo').resourceId,
+      'plugin-context7-context7/get_docs',
+    );
+  });
+});
+
+test('a corrupt identity cache must not throw — the PreToolUse path fails closed', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reva-governance-mapping-corrupt-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'mcp-server-identity.json'), '{ not valid json', 'utf8');
+    withPluginDataDir(dir, () => {
+      // A throw here would reach authorize.ts's catch and DENY a legitimate
+      // tool call, so this degrading quietly is the actual requirement.
+      const m = mapToolToCedar('mcp__d521f7ee-ac86-4efe-a02a-2f155cd06858__search_threads', {}, '/repo');
+      assert.equal(m.resourceId, 'd521f7ee-ac86-4efe-a02a-2f155cd06858/search_threads');
+    });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('a tool name with underscores in it keeps the full tool name after the server token', () => {
+  withPluginDataDir(undefined, () => {
+    const m = mapToolToCedar('mcp__some-server__tool__with__underscores', {}, '/repo');
+    assert.equal(m.resourceId, 'some-server/tool__with__underscores');
+  });
+});

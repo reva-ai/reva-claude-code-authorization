@@ -1,12 +1,28 @@
 node_modules/
 .env
 *.log
+.vscode/
 .DS_Store
-.idea/
 
-# Local AI-assistant scratch files, kept out of a public repository.
+# Ignore centralized AI rules and findings
 .cursor/
+findings/
+**/.cursor/
+**/findings/
+
+# Ignore centralized AI rules, ignore files, and agents documentation
 .cursorignore
 .cursorindexingignore
-findings/
 AGENTS.md
+agents.md
+**/.cursorignore
+**/.cursorindexingignore
+**/AGENTS.md
+**/agents.md
+/.idea/
+
+# Built plugin bundle — a packaging artifact, never source. Produced from
+# the committed dist/ + .claude-plugin/ and uploaded to the marketplace, so
+# committing it means a binary that silently goes stale against the very
+# commits it is built from (it embeds its own version and a commit stamp).
+*.plugin

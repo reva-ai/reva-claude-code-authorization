@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
+import { promisify } from 'node:util';
 import { nextSpawnIndex, resetSpawnCounter } from '../src/spawnCounter';
+
+const execFileAsync = promisify(execFile);
+const SPAWN_ONCE_SCRIPT = path.join(__dirname, 'support', 'spawnOnce.js');
 
 function withTempDir(fn: (dir: string) => void): void {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reva-governance-spawn-'));
@@ -76,4 +81,21 @@ test('with no pluginDataDir, nextSpawnIndex still returns a usable value but nev
   resetSpawnCounter('sess-1', undefined); // no-op, must not throw
 
   assert.equal(fs.existsSync(homeRevaGovernance), existedBefore);
+});
+
+test('concurrent spawns from real, separate processes never produce a duplicate or skipped index', async () => {
+  // Not withTempDir: that helper is synchronous and would rmSync the
+  // directory the moment this callback returns a pending Promise, racing
+  // the very child processes it's supposed to give a workspace to.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reva-governance-spawn-race-'));
+  try {
+    const CONCURRENCY = 12;
+    const results = await Promise.all(
+      Array.from({ length: CONCURRENCY }, () => execFileAsync('node', [SPAWN_ONCE_SCRIPT, 'sess-race', dir])),
+    );
+    const indices = results.map((r) => Number(r.stdout)).sort((a, b) => a - b);
+    assert.deepEqual(indices, Array.from({ length: CONCURRENCY }, (_, i) => i + 1));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

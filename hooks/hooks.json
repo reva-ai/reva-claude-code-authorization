@@ -7,7 +7,18 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/src/sessionStart.js\"",
-            "timeout": 10
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/src/sessionEnd.js\"",
+            "timeout": 3
           }
         ]
       }

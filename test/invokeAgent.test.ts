@@ -35,3 +35,11 @@ test('buildInvokeAgentRequest never fabricates a current prompt', () => {
     /nonblank current prompt/,
   );
 });
+
+test('buildInvokeAgentRequest threads machineId through to context.machineId', () => {
+  const withId = buildInvokeAgentRequest('alice@example.com', 'agent-a', 'hello', session, 0, undefined, 'machine-xyz');
+  assert.equal(withId.context.machineId, 'machine-xyz');
+
+  const withoutId = buildInvokeAgentRequest('alice@example.com', 'agent-a', 'hello', session);
+  assert.equal(withoutId.context.machineId, '');
+});

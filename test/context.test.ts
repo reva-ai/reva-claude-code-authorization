@@ -5,6 +5,7 @@ import {
   buildInvokeAgentContext,
   buildToolResponseTransmission,
   buildTransmission,
+  osAttribute,
   serializeToolResponse,
 } from '../src/context';
 import { CedarActionMapping, CedarHop, DirectEvalConversationMessage } from '../src/types';
@@ -28,9 +29,19 @@ const conversationMessages: DirectEvalConversationMessage[] = [
   },
 ];
 
-const CONTEXT_KEYS = ['activeSessionCount', 'sessionId', 'sessionEntryPoint', 'sessionLastSeen', 'agentType', 'hops', 'timestamp'].sort();
+const CONTEXT_KEYS = [
+  'activeSessionCount',
+  'sessionId',
+  'sessionEntryPoint',
+  'sessionLastSeen',
+  'agentType',
+  'machineId',
+  'os',
+  'hops',
+  'timestamp',
+].sort();
 
-test('invokeAgent context is timestamp + hops + session scalars + agentType — no prompt (PDP-managed, not client-set)', () => {
+test('invokeAgent context is timestamp + hops + session scalars + agentType — no prompt (RTG-managed, not client-set)', () => {
   const ctx = buildInvokeAgentContext();
   assert.deepEqual(Object.keys(ctx).sort(), CONTEXT_KEYS);
   assert.equal('prompt' in ctx, false);
@@ -126,6 +137,21 @@ test('session fields default to empty/0 when not provided', () => {
   assert.equal(ctx.sessionId, '');
   assert.equal(ctx.sessionEntryPoint, '');
   assert.equal(ctx.sessionLastSeen, 0);
+  assert.equal(ctx.machineId, '');
+});
+
+test('machineId is carried through as a plain scalar, on every action, when the caller provides it', () => {
+  const actions: CedarActionMapping[] = [
+    { actionName: 'invokeTool', resourceType: 'Tool', resourceId: 'WebFetch' },
+    { actionName: 'spawn', resourceType: 'SubAgent', resourceId: 'Explore' },
+    { actionName: 'executeBash', resourceType: 'Directory', resourceId: '/repo', command: 'ls' },
+    { actionName: 'read', resourceType: 'File', resourceId: '/repo/a.ts' },
+    { actionName: 'glob', resourceType: 'Directory', resourceId: '/repo' },
+  ];
+  for (const mapping of actions) {
+    assert.equal(buildActionContext(mapping, { machineId: 'machine-xyz' }).machineId, 'machine-xyz');
+  }
+  assert.equal(buildInvokeAgentContext(0, undefined, 'machine-xyz').machineId, 'machine-xyz');
 });
 
 test('agentType is the constant "ClaudeCode" on every action, not runtime-detected', () => {
@@ -159,7 +185,7 @@ test('timestamp is a Long (epoch milliseconds), not an ISO string, on every acti
   assert.equal(typeof buildInvokeAgentContext().timestamp, 'number');
 });
 
-test('prompt is never present in context, on any action — it is PDP-managed, not client-set', () => {
+test('prompt is never present in context, on any action — it is RTG-managed, not client-set', () => {
   const invokeTool: CedarActionMapping = { actionName: 'invokeTool', resourceType: 'Tool', resourceId: 'WebFetch' };
   assert.equal('prompt' in buildActionContext(invokeTool), false);
 
@@ -179,6 +205,21 @@ test('spawn context uses the real subagentIndex when provided, defaults to 1 oth
   const mapping: CedarActionMapping = { actionName: 'spawn', resourceType: 'SubAgent', resourceId: 'Explore' };
   assert.equal(buildActionContext(mapping).subagentIndex, 1);
   assert.equal(buildActionContext(mapping, { subagentIndex: 4 }).subagentIndex, 4);
+});
+
+test('osAttribute reports Windows, macOS, and Linux distinctly — every other Unix-like platform falls back to Linux', () => {
+  assert.equal(osAttribute('win32'), 'Windows');
+  assert.equal(osAttribute('darwin'), 'macOS');
+  for (const otherUnixLike of ['linux', 'freebsd', 'openbsd', 'aix', 'sunos'] as const) {
+    assert.equal(osAttribute(otherUnixLike), 'Linux');
+  }
+});
+
+test('os is present on every action, using the real current platform', () => {
+  const mapping: CedarActionMapping = { actionName: 'read', resourceType: 'File', resourceId: '/repo/a.ts' };
+  const expected = osAttribute();
+  assert.equal(buildActionContext(mapping).os, expected);
+  assert.equal(buildInvokeAgentContext().os, expected);
 });
 
 test('active-turn evidence uses context.conversation and context.hops with object actions', () => {

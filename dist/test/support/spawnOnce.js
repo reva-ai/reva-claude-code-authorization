@@ -1,0 +1,11 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+// Tiny CLI used only by spawnCounter.test.ts's concurrency test: calling
+// nextSpawnIndex() directly within one test process can't exercise the
+// cross-process lock at all (it's synchronous — nothing else can run
+// "at the same time" in a single Node process). This script lets the test
+// fire off many *real* OS processes against the same session/dir and see
+// whether the lock actually serializes them.
+const spawnCounter_1 = require("../../src/spawnCounter");
+const [sessionId, pluginDataDir] = process.argv.slice(2);
+process.stdout.write(String((0, spawnCounter_1.nextSpawnIndex)(sessionId, pluginDataDir)));

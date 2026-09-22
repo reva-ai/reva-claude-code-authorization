@@ -88,24 +88,24 @@ async function runPreToolHook(status, body, dataDir) {
         await new Promise((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
     }
 }
-(0, node_test_1.test)('PreToolUse emits no decision while 401/5xx inactivity circuits are open', async (t) => {
-    for (const [status, body] of [
-        [401, { decision: false, error_type: 'USER_DISABLED' }],
-        [503, { decision: false, error_type: 'POLICY_ENGINE_UNAVAILABLE' }],
-    ]) {
-        await t.test(`HTTP ${status}`, async (t) => {
-            const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), `reva-hook-${status}-`));
-            t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
-            const result = await runPreToolHook(status, body, dataDir);
-            strict_1.default.equal(result.code, 0, result.stderr);
-            strict_1.default.equal(result.stdout, '');
-        });
-    }
+(0, node_test_1.test)('PreToolUse emits no decision while the 401 inactivity circuit is open (fails open)', async (t) => {
+    const status = 401;
+    const body = { decision: false, error_type: 'USER_DISABLED' };
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), `reva-hook-${status}-`));
+    t.after(() => fs.rmSync(dataDir, { recursive: true, force: true }));
+    const result = await runPreToolHook(status, body, dataDir);
+    strict_1.default.equal(result.code, 0, result.stderr);
+    strict_1.default.equal(result.stdout, '');
 });
-(0, node_test_1.test)('PreToolUse still emits allow for 200 and deny for 403', async (t) => {
+(0, node_test_1.test)('PreToolUse still emits allow for 200 and an explicit deny for 403/404/424/503', async (t) => {
     for (const [status, body, expected] of [
         [200, { decision: true }, 'allow'],
         [403, { decision: false, error_type: 'POLICY_DENIED', context: { reason: 'denied' } }, 'deny'],
+        [404, {}, 'deny'],
+        [424, { decision: false, error_type: 'RTG_FAILED_DEPENDENCY' }, 'deny'],
+        // Backend unavailability now fails closed — a Reva-side outage must
+        // still block, not silently pass through (see rtgClient.ts).
+        [503, { decision: false, error_type: 'POLICY_ENGINE_UNAVAILABLE' }, 'deny'],
     ]) {
         await t.test(`HTTP ${status}`, async (t) => {
             const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), `reva-hook-${status}-`));

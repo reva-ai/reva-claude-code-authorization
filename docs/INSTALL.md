@@ -15,7 +15,7 @@ run it directly.
 
 ```bash
 claude plugin marketplace add https://github.com/reva-ai/reva-claude-code-authorization.git
-claude plugin install reva-governance@reva-plugins --config auth_token=<your token>
+claude plugin install reva-security@reva-plugins --config auth_token=<your token>
 ```
 
 Start a new `claude` session afterwards — configuration is read at session start, not live.
@@ -27,7 +27,7 @@ settings file.
 If your tenant is not on `api.reva.ai`, pass it at install time too:
 
 ```bash
-claude plugin install reva-governance@reva-plugins \
+claude plugin install reva-security@reva-plugins \
   --config auth_token=<your token> \
   --config host=api.example.reva.ai
 ```
@@ -59,7 +59,7 @@ the same way if you are not on the default host.
       }
     }
   },
-  "enabledPlugins": { "reva-governance@reva-plugins": true }
+  "enabledPlugins": { "reva-security@reva-plugins": true }
 }
 ```
 
@@ -77,8 +77,8 @@ to know that.
   already-installed plugin does **not** apply the change. Uninstall and reinstall:
 
   ```bash
-  claude plugin uninstall reva-governance@reva-plugins
-  claude plugin install reva-governance@reva-plugins --config auth_token=<new token>
+  claude plugin uninstall reva-security@reva-plugins
+  claude plugin install reva-security@reva-plugins --config auth_token=<new token>
   ```
 
 - **Set as an environment variable**: update it at the source — your shell profile,
@@ -89,7 +89,7 @@ Either way, start a fresh session afterwards.
 ## Uninstalling
 
 ```bash
-claude plugin uninstall reva-governance@reva-plugins
+claude plugin uninstall reva-security@reva-plugins
 ```
 
 Local state (turn caches, spawn counters, the active-session list) lives in the directory

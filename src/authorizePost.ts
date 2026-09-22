@@ -2,29 +2,31 @@ import { getActiveSessionCount, getSessionEntry } from './activeSessions';
 import { buildActionContext, buildToolResponseTransmission } from './context';
 import { loadConfig } from './config';
 import { debugLog } from './debug';
+import { resolveMachineId } from './deviceId';
 import { buildEntityDescriptor, directSpecOf } from './entity';
 import { loadAgentHops, resolveSubAgentLineage } from './hopChain';
 import { resolveAgentContext, resolveUserEmail } from './identity';
 import { mapToolToCedar } from './mapping';
-import { evaluate } from './pdpClient';
+import { evaluate } from './rtgClient';
+import { skipOutsideCodeScope } from './runtimeScope';
 import { readStdin } from './stdin';
 import { buildSessionContext, buildTraceId, traceparentHeader } from './trace';
-import { CedarEntityDescriptor, CedarRequest, PdpResult, PostToolUseInput } from './types';
+import { CedarEntityDescriptor, CedarRequest, RtgResult, PostToolUseInput } from './types';
 import { conversationFromTurn, directSessionFromTurn, loadOrStartTurn } from './turnCache';
 
-// PostToolUse fires after the tool has already run. A PDP deny cannot undo
+// PostToolUse fires after the tool has already run. An RTG deny cannot undo
 // it; it surfaces as a top-level decision:"block" so Claude sees the reason
 // next to the tool result. Same fail-closed posture as PreToolUse: unexpected
 // errors still block further work rather than exiting non-zero (which Claude
 // Code treats as a non-blocking hook error).
-function writeDecision(result: PdpResult): never {
+function writeDecision(result: RtgResult): never {
   if (result.inactive) {
     // The inactive circuit is a no-op, including after a tool result.
   } else if (result.decision === 'deny') {
     process.stdout.write(
       JSON.stringify({
         decision: 'block',
-        reason: result.reason || 'Blocked by Reva governance policy',
+        reason: result.reason || "Blocked by your organization's security policy.",
       }),
     );
   } else if (result.decision === 'ask') {
@@ -43,6 +45,7 @@ function writeDecision(result: PdpResult): never {
 }
 
 async function main(): Promise<void> {
+  if (skipOutsideCodeScope()) return;
   const raw = await readStdin();
   const input: PostToolUseInput = JSON.parse(raw);
   const cfg = loadConfig();
@@ -96,6 +99,7 @@ async function main(): Promise<void> {
       conversationMessages: conversationFromTurn(turn),
       activeSessionCount,
       currentSession,
+      machineId: resolveMachineId(pluginDataDir),
     }),
     // The tool result lives here — not in closed Cedar context — so the
     // evaluate payload carries the actual response without a schema change.
@@ -106,7 +110,7 @@ async function main(): Promise<void> {
   debugLog(
     `-> post ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}, hops=${hops.length})`,
   );
-  const result = await evaluate(cfg, request, traceparent);
+  const result = await evaluate(cfg, request, traceparent, pluginDataDir);
   debugLog(`<- post decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
   writeDecision(result);
 }

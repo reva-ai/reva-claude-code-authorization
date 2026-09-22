@@ -4,11 +4,14 @@ const activeSessions_1 = require("./activeSessions");
 const context_1 = require("./context");
 const config_1 = require("./config");
 const debug_1 = require("./debug");
+const deviceId_1 = require("./deviceId");
 const entity_1 = require("./entity");
 const hopChain_1 = require("./hopChain");
 const identity_1 = require("./identity");
 const mapping_1 = require("./mapping");
-const pdpClient_1 = require("./pdpClient");
+const mcpIngestionTrigger_1 = require("./mcpIngestionTrigger");
+const rtgClient_1 = require("./rtgClient");
+const runtimeScope_1 = require("./runtimeScope");
 const stdin_1 = require("./stdin");
 const spawnCounter_1 = require("./spawnCounter");
 const trace_1 = require("./trace");
@@ -27,7 +30,8 @@ function writeDecision(result) {
         },
     };
     if (permissionDecision === 'deny') {
-        output.hookSpecificOutput.permissionDecisionReason = result.reason || 'Blocked by Reva governance policy';
+        output.hookSpecificOutput.permissionDecisionReason =
+            result.reason || "Blocked by your organization's security policy.";
     }
     else if (permissionDecision === 'ask') {
         output.hookSpecificOutput.permissionDecisionReason = result.reason || 'Requires manual approval per Reva governance policy';
@@ -36,6 +40,8 @@ function writeDecision(result) {
     process.exit(0);
 }
 async function main() {
+    if ((0, runtimeScope_1.skipOutsideCodeScope)())
+        return;
     const raw = await (0, stdin_1.readStdin)();
     const input = JSON.parse(raw);
     const cfg = (0, config_1.loadConfig)();
@@ -51,6 +57,20 @@ async function main() {
     const activeSessionCount = (0, activeSessions_1.getActiveSessionCount)(cfg.agentId, pluginDataDir);
     const agentCtx = (0, identity_1.resolveAgentContext)(cfg.agentId, input);
     const mapping = (0, mapping_1.mapToolToCedar)(input.tool_name, input.tool_input || {}, input.cwd);
+    // Ingest-on-invoke — an MCP server being used but not yet ingested gets a
+    // discovery pass triggered now instead of at the next recheck. Wrapped in
+    // its own try/catch on purpose: main()'s catch below fails CLOSED, so an
+    // unexpected throw in this best-effort bookkeeping would DENY a legitimate
+    // tool call. Nothing here is worth blocking a user's work over, so it is
+    // contained and swallowed rather than allowed to reach that handler.
+    try {
+        const mcpServer = (mapping.resourceParents || []).find((parent) => parent.type === 'MCPServer');
+        if (mcpServer)
+            (0, mcpIngestionTrigger_1.triggerMcpIngestionForInvokedServer)(mcpServer.id, input.cwd, pluginDataDir);
+    }
+    catch (err) {
+        (0, debug_1.debugLog)(`authorize: ingest-on-invoke skipped — ${err?.message || String(err)}`);
+    }
     // Read back the span/session metadata UserPromptSubmit recorded for this
     // turn. If no boundary exists, loadOrStartTurn records this first event as
     // the observed turn instead of inventing prior history.
@@ -97,6 +117,7 @@ async function main() {
             conversationMessages: (0, turnCache_1.conversationFromTurn)(turn),
             activeSessionCount,
             currentSession,
+            machineId: (0, deviceId_1.resolveMachineId)(pluginDataDir),
         }),
         transmission: (0, context_1.buildTransmission)(currentHopContent, 'assistant', input.tool_name),
         session: (0, turnCache_1.directSessionFromTurn)(input.session_id, turn),
@@ -116,7 +137,7 @@ async function main() {
         (0, hopChain_1.enqueuePendingSpawnLineage)(input.session_id, hops, spawnHop, pluginDataDir);
     }
     (0, debug_1.debugLog)(`-> ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}${subagentIndex !== undefined ? `, subagentIndex=${subagentIndex}` : ''}, hops=${hops.length})`);
-    const result = await (0, pdpClient_1.evaluate)(cfg, request, traceparent);
+    const result = await (0, rtgClient_1.evaluate)(cfg, request, traceparent, pluginDataDir);
     (0, debug_1.debugLog)(`<- decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
     writeDecision(result);
 }

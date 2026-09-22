@@ -5,7 +5,9 @@ exports.urlFromHost = urlFromHost;
 exports.loadConfig = loadConfig;
 const deviceId_1 = require("./deviceId");
 const DEFAULT_TIMEOUT_MS = 25000;
-const PDP_PATH = '/pdp/v2/ai/evaluation';
+// The path segment itself is Reva's actual API route — fixed by the
+// backend, not ours to rename regardless of what we call this internally.
+const RTG_PATH = '/pdp/v2/ai/evaluation';
 const INGESTION_PATH = '/ingestion/v2';
 //  REVA_HOST overrides this.
 exports.DEFAULT_HOST = 'api.reva.ai';
@@ -23,8 +25,8 @@ const DEFAULT_INGESTION_TIMEOUT_MS = 5000;
 // users to hand-edit settings.json").
 //
 // The plain REVA_* env vars still take priority when present — kept as the
-// escape hatch for local development and the mock-PDP testing workflow
-// (see CONTRIBUTING.md), and so anyone already using the older manual
+// escape hatch for local development and the mock-RTG testing workflow
+// (README "Testing"), and so anyone already using the older manual
 // settings.json `env` approach isn't forced to redo anything.
 function readOption(env, revaVar, optionKey) {
     return env[revaVar] || env[`CLAUDE_PLUGIN_OPTION_${optionKey}`] || '';
@@ -47,10 +49,11 @@ function loadConfig(env = process.env) {
     // Host resolution: REVA_HOST, then the install-dialog `host` option, then
     // the built-in default. Same precedence as the token, so a tenant that is
     // not on the default host can be configured entirely from the install
-    // dialog without anyone editing an environment variable. Paths are fixed
-    // in code.
+    // dialog without anyone editing an environment variable — which is what
+    // the README and docs/INSTALL.md tell users to do (`--config host=`).
+    // Paths are fixed in code.
     const host = readOption(env, 'REVA_HOST', 'HOST').trim() || exports.DEFAULT_HOST;
-    const pdpUrl = urlFromHost(host, PDP_PATH);
+    const rtgUrl = urlFromHost(host, RTG_PATH);
     const ingestionUrl = urlFromHost(host, INGESTION_PATH);
     // One token authenticates everything this plugin does — evaluation AND
     // ingestion. No separate ingestion credential, no fallback logic: there's
@@ -79,9 +82,13 @@ function loadConfig(env = process.env) {
         throw new Error('Reva governance is not configured — missing: REVA_AGENT_ID (no Anthropic account is logged in on this machine — set REVA_AGENT_ID explicitly, e.g. for ANTHROPIC_API_KEY auth)');
     }
     return {
-        pdpUrl,
+        rtgUrl,
         authorization,
         agentId,
+        // REVA_PDP_TIMEOUT_MS is a public, documented config variable — its
+        // NAME stays exactly as-is regardless of internal renaming, so an
+        // existing deployment that already sets it doesn't silently stop
+        // working.
         timeoutMs: Number(env.REVA_PDP_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS,
         ingestionUrl,
         ingestionTimeoutMs: Number(env.REVA_INGESTION_TIMEOUT_MS) || DEFAULT_INGESTION_TIMEOUT_MS,

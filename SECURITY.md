@@ -85,19 +85,33 @@ decision at all, so Claude Code proceeds exactly as if the plugin were not insta
 
 | Condition | Outcome |
 |---|---|
-| PDP returns 200 | **allow** |
-| PDP returns 200 with `guardrails.outcome: conditional_allow` | **ask** — Claude Code prompts the developer |
-| PDP returns 403 | **deny** — the action is blocked |
-| PDP returns 401 (bad or expired token) | **pass through** — never blocks |
-| PDP returns 5xx | **pass through** — fails open |
-| Network error or timeout | **pass through** — fails open |
-| PDP returns another 4xx | **deny** |
+| RTG returns 200 | **allow** |
+| RTG returns 200 with `guardrails.outcome: conditional_allow` | **ask** — Claude Code prompts the developer |
+| RTG returns 403 | **deny** — the action is blocked |
+| RTG returns 401 (bad or expired token) | **pass through** — and opens a 4-hour window in which RTG is not called at all and every action passes through, after which it re-checks |
+| RTG returns 413 (payload too large) | **pass through** — this one request only |
+| RTG returns 404 or 424 | **deny** — blocked while Reva is unavailable |
+| RTG returns 5xx | **deny** — blocked while Reva is unavailable |
+| Network error or timeout | **deny** — blocked while Reva is unavailable |
+| RTG returns another 4xx, including 429 | **deny** |
 | `REVA_AUTH_TOKEN` missing | **deny — every action**, until configured |
 | `REVA_AGENT_ID` unresolvable and no Anthropic account logged in | **deny — every action**, until configured |
 | Internal plugin error (bad stdin, mapping bug) | **deny** |
 
-The split is deliberate: a Reva **outage** must not stop a developer working, but a plugin that
-is **misconfigured** must not silently permit everything while appearing to govern.
+The split is deliberate, and it changed: governance now holds **through** a Reva-side outage.
+An unreachable, timing-out or erroring RTG blocks every action rather than degrading to "no
+governance for that moment", and a plugin that is misconfigured must likewise not silently
+permit everything while appearing to govern.
+
+Two conditions still pass through. A **401** more often means a principal that is not
+provisioned yet than a real security failure, so it fails open — but because failing open on
+every call for as long as a bad token lasts would be indistinguishable from having no plugin,
+it also trips a local 4-hour circuit breaker that caps that window and forces a fresh check
+when it expires. A **413** is about one oversized request, not a sign that Reva is unavailable.
+
+**Plan for the fail-closed case before a team rollout.** With the RTG unreachable, every
+governed action is blocked, so an outage stops developers working. `REVA_DEBUG=1` prints the
+reason, and uninstalling the plugin is the only local override.
 
 The practical consequence: a developer authenticating with `ANTHROPIC_API_KEY` rather than an
 OAuth login has no resolvable account UUID, and is **blocked on every action** until
@@ -112,7 +126,7 @@ stores it in the OS keychain rather than in a plaintext `settings.json`. Supplie
 keep it in your secrets manager and let that populate the environment.
 
 **Transport.** HTTPS for every host except `localhost`, `127.0.0.1` and `[::1]`, which use
-plain HTTP so a local mock PDP works for testing. A non-local host is always HTTPS; that cannot
+plain HTTP so a local mock RTG works for testing. A non-local host is always HTTPS; that cannot
 be turned off.
 
 **No runtime dependencies.** The plugin uses only the Node standard library. TypeScript and
@@ -128,7 +142,7 @@ egress is to `REVA_HOST`.
       secrets manager — never committed to a shared `settings.json`
 - [ ] `REVA_HOST` set explicitly for your tenant; the built-in default is `api.reva.ai`
 - [ ] Token rotation has a named owner — the plugin does not detect or warn on expiry, it
-      simply passes traffic through (401 fails open)
+      simply passes traffic through for 4 hours at a time (401 fails open)
 - [ ] Developers on `ANTHROPIC_API_KEY` auth have `REVA_AGENT_ID` set, or they are blocked
 - [ ] `REVA_DEBUG` unset in normal use — it logs decisions and payload detail to stderr
 - [ ] Your team has been told what this transmits, per "What it sends, and what it keeps"
