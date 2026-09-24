@@ -52,59 +52,84 @@ function withTempDir(fn) {
     }
 }
 // Matches rtgCircuitBreaker.ts's own (unexported) cacheFile() convention —
-// needed here only to hand-write an already-expired or malformed entry.
-function cacheFile(dir, agentId) {
-    return path.join(dir, 'rtg-circuit-breaker', `${agentId}.json`);
+// needed here only to hand-write a malformed or backdated entry.
+function cacheFile(dir, sessionId) {
+    return path.join(dir, 'rtg-circuit-breaker', `${sessionId}.json`);
 }
-(0, node_test_1.test)('no breaker has ever tripped — not disabled', () => {
+(0, node_test_1.test)('a session that has never seen a 401 is closed', () => {
     withTempDir((dir) => {
-        const status = (0, rtgCircuitBreaker_1.checkCircuitBreaker)('agent-1', dir);
-        strict_1.default.equal(status.disabled, false);
+        strict_1.default.equal((0, rtgCircuitBreaker_1.isCircuitOpen)('sess-1', dir).open, false);
     });
 });
-(0, node_test_1.test)('tripCircuitBreaker opens the breaker for the given duration, carrying status/errorType through', () => {
+(0, node_test_1.test)('openCircuit latches that session, carrying status and errorType through', () => {
     withTempDir((dir) => {
-        (0, rtgCircuitBreaker_1.tripCircuitBreaker)('agent-1', 60_000, 500, 'RTG_SERVER_ERROR', dir);
-        const status = (0, rtgCircuitBreaker_1.checkCircuitBreaker)('agent-1', dir);
-        strict_1.default.equal(status.disabled, true);
-        strict_1.default.equal(status.triggeredStatus, 500);
-        strict_1.default.equal(status.errorType, 'RTG_SERVER_ERROR');
-        strict_1.default.ok(status.disabledUntil > Date.now());
+        (0, rtgCircuitBreaker_1.openCircuit)('sess-1', 401, 'UNAUTHORIZED', dir);
+        const status = (0, rtgCircuitBreaker_1.isCircuitOpen)('sess-1', dir);
+        strict_1.default.equal(status.open, true);
+        strict_1.default.equal(status.triggeredStatus, 401);
+        strict_1.default.equal(status.errorType, 'UNAUTHORIZED');
+        strict_1.default.ok(status.openedAt <= Date.now());
     });
 });
-(0, node_test_1.test)('a window in the past reports as not disabled', () => {
+(0, node_test_1.test)('the latch NEVER expires — openedAt is recorded but never compared to the clock', () => {
     withTempDir((dir) => {
-        (0, rtgCircuitBreaker_1.tripCircuitBreaker)('agent-1', -1000, 503, 'RTG_UNAVAILABLE', dir);
-        const status = (0, rtgCircuitBreaker_1.checkCircuitBreaker)('agent-1', dir);
-        strict_1.default.equal(status.disabled, false);
+        // Backdated a year. Under the old 4-hour window this would have reopened
+        // the circuit; a session latch has no expiry at all.
+        const file = cacheFile(dir, 'sess-old');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify({ openedAt: Date.now() - 365 * 24 * 60 * 60 * 1000, triggeredStatus: 401, errorType: 'UNAUTHORIZED' }), 'utf8');
+        strict_1.default.equal((0, rtgCircuitBreaker_1.isCircuitOpen)('sess-old', dir).open, true, 'a latched session stays latched for good');
     });
 });
-(0, node_test_1.test)('different agents get independent breakers', () => {
+(0, node_test_1.test)('a DIFFERENT session is unaffected — this is the recovery path', () => {
     withTempDir((dir) => {
-        (0, rtgCircuitBreaker_1.tripCircuitBreaker)('agent-1', 60_000, 401, 'UNAUTHORIZED', dir);
-        strict_1.default.equal((0, rtgCircuitBreaker_1.checkCircuitBreaker)('agent-1', dir).disabled, true);
-        strict_1.default.equal((0, rtgCircuitBreaker_1.checkCircuitBreaker)('agent-2', dir).disabled, false);
+        (0, rtgCircuitBreaker_1.openCircuit)('sess-broken', 401, 'UNAUTHORIZED', dir);
+        strict_1.default.equal((0, rtgCircuitBreaker_1.isCircuitOpen)('sess-broken', dir).open, true);
+        // The whole point of session scoping: the user restarts, gets a new
+        // session id, and the plugin calls the RTG again immediately. Under the
+        // old agent-keyed window this session would have been silenced too.
+        strict_1.default.equal((0, rtgCircuitBreaker_1.isCircuitOpen)('sess-fresh', dir).open, false);
     });
 });
-(0, node_test_1.test)('a later trip call replaces the previous window rather than merging with it', () => {
+(0, node_test_1.test)('a second 401 in the same session is idempotent', () => {
     withTempDir((dir) => {
-        (0, rtgCircuitBreaker_1.tripCircuitBreaker)('agent-1', 60_000, 500, 'RTG_SERVER_ERROR', dir);
-        (0, rtgCircuitBreaker_1.tripCircuitBreaker)('agent-1', 60_000, 424, 'RTG_FAILED_DEPENDENCY', dir);
-        const status = (0, rtgCircuitBreaker_1.checkCircuitBreaker)('agent-1', dir);
-        strict_1.default.equal(status.triggeredStatus, 424);
-        strict_1.default.equal(status.errorType, 'RTG_FAILED_DEPENDENCY');
+        (0, rtgCircuitBreaker_1.openCircuit)('sess-1', 401, 'UNAUTHORIZED', dir);
+        const first = (0, rtgCircuitBreaker_1.isCircuitOpen)('sess-1', dir).openedAt;
+        (0, rtgCircuitBreaker_1.openCircuit)('sess-1', 401, 'UNAUTHORIZED', dir);
+        const second = (0, rtgCircuitBreaker_1.isCircuitOpen)('sess-1', dir);
+        strict_1.default.equal(second.open, true);
+        strict_1.default.ok(second.openedAt >= first);
     });
 });
-(0, node_test_1.test)('malformed state file is treated as not disabled, not a crash', () => {
+(0, node_test_1.test)('an unreadable latch reads as CLOSED, so the RTG is called rather than skipped', () => {
     withTempDir((dir) => {
-        fs.mkdirSync(path.dirname(cacheFile(dir, 'agent-1')), { recursive: true });
-        fs.writeFileSync(cacheFile(dir, 'agent-1'), 'not json', 'utf8');
-        const status = (0, rtgCircuitBreaker_1.checkCircuitBreaker)('agent-1', dir);
-        strict_1.default.equal(status.disabled, false);
+        const file = cacheFile(dir, 'sess-corrupt');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, '{ not json', 'utf8');
+        // Erring toward MAKING the governance call is the safer direction — a
+        // latch we cannot read is not evidence that we should stop checking.
+        strict_1.default.equal((0, rtgCircuitBreaker_1.isCircuitOpen)('sess-corrupt', dir).open, false);
     });
 });
-(0, node_test_1.test)('with no pluginDataDir, checkCircuitBreaker always reports not disabled and tripCircuitBreaker is a harmless no-op', () => {
-    strict_1.default.equal((0, rtgCircuitBreaker_1.checkCircuitBreaker)('agent-1').disabled, false);
-    strict_1.default.doesNotThrow(() => (0, rtgCircuitBreaker_1.tripCircuitBreaker)('agent-1', 60_000, 500, 'RTG_SERVER_ERROR'));
-    strict_1.default.equal((0, rtgCircuitBreaker_1.checkCircuitBreaker)('agent-1').disabled, false);
+(0, node_test_1.test)('with no pluginDataDir nothing is written and nothing reads as open', () => {
+    (0, rtgCircuitBreaker_1.openCircuit)('sess-1', 401, 'UNAUTHORIZED', undefined);
+    strict_1.default.equal((0, rtgCircuitBreaker_1.isCircuitOpen)('sess-1', undefined).open, false);
+});
+(0, node_test_1.test)('an empty session id never latches', () => {
+    withTempDir((dir) => {
+        (0, rtgCircuitBreaker_1.openCircuit)('', 401, 'UNAUTHORIZED', dir);
+        strict_1.default.equal((0, rtgCircuitBreaker_1.isCircuitOpen)('', dir).open, false);
+    });
+});
+(0, node_test_1.test)('latches older than the 30-day stale window are swept on the next write', () => {
+    withTempDir((dir) => {
+        const old = cacheFile(dir, 'sess-ancient');
+        fs.mkdirSync(path.dirname(old), { recursive: true });
+        fs.writeFileSync(old, JSON.stringify({ openedAt: 0, triggeredStatus: 401 }), 'utf8');
+        const longAgo = Date.now() - 60 * 24 * 60 * 60 * 1000;
+        fs.utimesSync(old, longAgo / 1000, longAgo / 1000);
+        (0, rtgCircuitBreaker_1.openCircuit)('sess-new', 401, 'UNAUTHORIZED', dir);
+        strict_1.default.equal(fs.existsSync(old), false, 'stale latch removed');
+        strict_1.default.equal((0, rtgCircuitBreaker_1.isCircuitOpen)('sess-new', dir).open, true, 'the new one survives');
+    });
 });

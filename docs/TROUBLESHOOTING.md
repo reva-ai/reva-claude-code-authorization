@@ -32,7 +32,8 @@ a configuration problem. Check the decision log in your Reva console.
 
 Since 2.x the plugin fails **closed** when Reva cannot give an answer, so an outage shows
 up as everything being blocked, not as ungoverned work. Two cases still pass through
-silently: a rejected token (401), for up to 4 hours, and an oversized payload (413). Run
+silently: a rejected token (401), for the rest of that session, and an oversized payload
+(413). Run
 with `REVA_DEBUG=1`: a pass-through logs a reason such as
 `Reva authorization unavailable (unauthorized) — failing open for this request`.
 
@@ -42,9 +43,10 @@ Check in this order:
    Claude Code launched from.
 2. **Is the host right?** `REVA_HOST` defaults to `api.reva.ai`. If your tenant is
    elsewhere, every call fails — and, failing closed, every action is blocked.
-3. **Is the token still valid?** A 401 fails open by design, and opens a 4-hour window in
-   which RTG is not called at all. The plugin does not warn on expiry — it simply stops
-   governing for that window. This is the failure mode worth monitoring.
+3. **Is the token still valid?** A 401 fails open by design, and latches that session
+   open — RTG is not called again until a new session starts. The plugin does not warn on
+   expiry, it simply stops governing for the rest of the session. This is the failure mode
+   worth monitoring, and restarting the session is how a repaired token is picked up.
 4. **Did you start a new session?** Configuration is read at session start.
 
 ## `dist/src/...js` not found

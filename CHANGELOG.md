@@ -5,6 +5,39 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-09-24
+
+### Added
+
+- `X-Reva-Thread-Id` on every RTG call: the chat's own Claude Code session id, constant
+  from a conversation's first prompt to its last. Sent to RTG only, never to ingestion.
+- `REVA_DEBUG=1` now reports, on a configuration failure, which source was consulted for
+  the auth token and agent id and whether each was absent or present-but-empty — never
+  the value. Without it, "missing: REVA_AUTH_TOKEN" misdirects on a normal install, where
+  the token arrives from the OS keychain as `CLAUDE_PLUGIN_OPTION_AUTH_TOKEN`.
+
+### Changed
+
+- **Tracing now has three levels instead of two.** The trace id is minted per user prompt
+  rather than hashed from the session id, and the span id is derived per operation so the
+  `PreToolUse` and `PostToolUse` halves of one tool call share a span. Previously both
+  levels sat one step too high and there was no thread identifier at all.
+- **The 401 circuit breaker is now a per-session latch, not a 4-hour machine-wide window.**
+  The old breaker was keyed by Agent id, so one session's 401 silenced every other session
+  on the machine, and nothing closed it on success — a licence repaired five minutes in
+  still left almost four hours of ungoverned operation. The latch is keyed by session, has
+  no expiry, and starting a new session is the recovery: it always makes a real call.
+
+### Fixed
+
+- `README.md`, `SECURITY.md`, `docs/CONFIGURATION.md` and `docs/TROUBLESHOOTING.md` still
+  described the 4-hour breaker window. Corrected to the session latch.
+- `SECURITY.md`'s transmitted-metadata table did not mention the correlation identifiers.
+- Re-applied against this development drop, which branched before `1.0.0`: the `host`
+  install-dialog option and its tests, `package.json`'s release metadata and `package`
+  script, `scripts/check-no-real-identifiers.mjs`, and the `surfaceIsolation` assertion
+  that fails unless `debug.log` is the only thing Cowork writes.
+
 ## [1.1.0] — 2026-09-22
 
 Merges the internal 2.x development line into the public repository. See **Version
@@ -96,5 +129,6 @@ First public release.
 - `src/config.ts` referred to a README "Testing" section that did not exist; it now points
   at `CONTRIBUTING.md`.
 
+[1.2.0]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.2.0
 [1.1.0]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.1.0
 [1.0.0]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.0.0

@@ -44,6 +44,7 @@ Alongside the content, each request carries identity and resource metadata:
 | subject / agent id | The Anthropic **account UUID** | `oauthAccount.accountUuid`, or `REVA_AGENT_ID` when set |
 | resource id | The file, directory or repository acted on | See "Paths" below |
 | session | Session id, turn number, and a count of concurrent sessions | local |
+| correlation ids | A per-chat **thread id** — the Claude Code session id, sent as `X-Reva-Thread-Id` — plus a per-prompt trace id and a per-operation span id in the W3C `traceparent` header | local |
 
 At **session start** the plugin also registers entities with Reva's ingestion API: the
 developer's email, this machine's **hardware id** (`IOPlatformUUID` on macOS,
@@ -88,7 +89,7 @@ decision at all, so Claude Code proceeds exactly as if the plugin were not insta
 | RTG returns 200 | **allow** |
 | RTG returns 200 with `guardrails.outcome: conditional_allow` | **ask** — Claude Code prompts the developer |
 | RTG returns 403 | **deny** — the action is blocked |
-| RTG returns 401 (bad or expired token) | **pass through** — and opens a 4-hour window in which RTG is not called at all and every action passes through, after which it re-checks |
+| RTG returns 401 (bad or expired token) | **pass through** — and latches that session open: RTG is not called again for the rest of it and every action passes through. A new session calls again. |
 | RTG returns 413 (payload too large) | **pass through** — this one request only |
 | RTG returns 404 or 424 | **deny** — blocked while Reva is unavailable |
 | RTG returns 5xx | **deny** — blocked while Reva is unavailable |
@@ -106,8 +107,10 @@ permit everything while appearing to govern.
 Two conditions still pass through. A **401** more often means a principal that is not
 provisioned yet than a real security failure, so it fails open — but because failing open on
 every call for as long as a bad token lasts would be indistinguishable from having no plugin,
-it also trips a local 4-hour circuit breaker that caps that window and forces a fresh check
-when it expires. A **413** is about one oversized request, not a sign that Reva is unavailable.
+it also latches a local circuit open for that session: no further RTG call is made in it,
+and no retry storm follows. The latch is keyed by session, so it never silences a different
+session — including one started after the problem was fixed — and starting a new session is
+how the repair is picked up. It does not expire on its own. A **413** is about one oversized request, not a sign that Reva is unavailable.
 
 **Plan for the fail-closed case before a team rollout.** With the RTG unreachable, every
 governed action is blocked, so an outage stops developers working. `REVA_DEBUG=1` prints the
@@ -142,7 +145,7 @@ egress is to `REVA_HOST`.
       secrets manager — never committed to a shared `settings.json`
 - [ ] `REVA_HOST` set explicitly for your tenant; the built-in default is `api.reva.ai`
 - [ ] Token rotation has a named owner — the plugin does not detect or warn on expiry, it
-      simply passes traffic through for 4 hours at a time (401 fails open)
+      simply passes traffic through for the remainder of each session (401 fails open)
 - [ ] Developers on `ANTHROPIC_API_KEY` auth have `REVA_AGENT_ID` set, or they are blocked
 - [ ] `REVA_DEBUG` unset in normal use — it logs decisions and payload detail to stderr
 - [ ] Your team has been told what this transmits, per "What it sends, and what it keeps"

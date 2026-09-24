@@ -6,7 +6,9 @@ import { test } from 'node:test';
 import {
   conversationFromTurn,
   directSessionFromTurn,
+  loadOrStartTurn,
   loadTurn,
+  resolveTurnTraceId,
   startTurn,
   truncatePrompt,
 } from '../src/turnCache';
@@ -24,7 +26,7 @@ test('startTurn persists a span id that loadTurn reads back for the same session
   withTempDir((dir) => {
     const turn = startTurn('sess-1', 'do the thing', dir);
     const loaded = loadTurn('sess-1', dir);
-    assert.equal(loaded?.spanId, turn.spanId);
+    assert.equal(loaded?.traceId, turn.traceId);
     assert.equal(loaded?.prompt, 'do the thing');
     assert.equal(loaded?.turn, 1);
     assert.match(loaded?.startedAt || '', /^\d{4}-\d{2}-\d{2}T/);
@@ -35,9 +37,9 @@ test('a second startTurn call for the same session overwrites the previous turn'
   withTempDir((dir) => {
     const first = startTurn('sess-1', 'turn one prompt', dir);
     const second = startTurn('sess-1', 'turn two prompt', dir);
-    assert.notEqual(first.spanId, second.spanId);
+    assert.notEqual(first.traceId, second.traceId);
     const loaded = loadTurn('sess-1', dir);
-    assert.equal(loaded?.spanId, second.spanId);
+    assert.equal(loaded?.traceId, second.traceId);
     assert.equal(loaded?.prompt, 'turn two prompt');
     assert.equal(loaded?.turn, 2);
     assert.equal(second.startedAt, first.startedAt);
@@ -48,9 +50,9 @@ test('different sessions get independent turn entries', () => {
   withTempDir((dir) => {
     const a = startTurn('sess-a', 'prompt a', dir);
     const b = startTurn('sess-b', 'prompt b', dir);
-    assert.notEqual(a.spanId, b.spanId);
-    assert.equal(loadTurn('sess-a', dir)?.spanId, a.spanId);
-    assert.equal(loadTurn('sess-b', dir)?.spanId, b.spanId);
+    assert.notEqual(a.traceId, b.traceId);
+    assert.equal(loadTurn('sess-a', dir)?.traceId, a.traceId);
+    assert.equal(loadTurn('sess-b', dir)?.traceId, b.traceId);
   });
 });
 
@@ -64,7 +66,7 @@ test('a prompt-less turn still gets a span id, with no prompt field', () => {
   withTempDir((dir) => {
     const turn = startTurn('sess-1', undefined, dir);
     const loaded = loadTurn('sess-1', dir);
-    assert.equal(loaded?.spanId, turn.spanId);
+    assert.equal(loaded?.traceId, turn.traceId);
     assert.equal(loaded?.prompt, undefined);
   });
 });
@@ -110,4 +112,53 @@ test('with no pluginDataDir, startTurn/loadTurn still work but never persist —
   assert.equal(loadTurn('sess-1', undefined), undefined); // but never actually persisted
 
   assert.equal(fs.existsSync(homeRevaGovernance), existedBefore);
+});
+
+test('with no pluginDataDir the trace id is derived, so separate hooks still share a turn', () => {
+  // A minted id can only be shared if it can be persisted — every later hook
+  // in the turn is its own process and reads it back from the cache. Without
+  // a cache to write to, minting would give each process a different random
+  // id and the turn would fragment into one trace per RTG call.
+  const a = resolveTurnTraceId('sess-nodir', loadOrStartTurn('sess-nodir', undefined));
+  const b = resolveTurnTraceId('sess-nodir', loadOrStartTurn('sess-nodir', undefined));
+  assert.equal(a, b, 'separate processes must agree with no cache available');
+  assert.match(a, /^[0-9a-f]{32}$/);
+});
+
+test('an upgrade from a pre-traceId cache entry keeps the turn and derives a shared trace', () => {
+  withTempDir((dir) => {
+    // Exactly the shape written before traceId existed: spanId, no traceId.
+    fs.mkdirSync(path.join(dir, 'turns'), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'turns', 'sess-old.json'),
+      JSON.stringify({
+        spanId: 'c515b2193e5f1234',
+        promptTimestamp: '2026-09-20T10:00:00.000Z',
+        turn: 13,
+        startedAt: '2026-09-20T09:00:00.000Z',
+        prompt: 'an older prompt',
+      }),
+      'utf8',
+    );
+
+    const turn = loadOrStartTurn('sess-old', dir);
+    // The turn must be REUSED, not restarted — restarting would bump the
+    // counter and lose the conversation's own history.
+    assert.equal(turn.turn, 13);
+    assert.equal(turn.startedAt, '2026-09-20T09:00:00.000Z');
+    assert.equal(turn.traceId, undefined);
+
+    // …and every hook still agrees on a trace for it, via the fallback.
+    const first = resolveTurnTraceId('sess-old', turn);
+    const second = resolveTurnTraceId('sess-old', loadOrStartTurn('sess-old', dir));
+    assert.equal(first, second);
+    assert.match(first, /^[0-9a-f]{32}$/);
+
+    // The next prompt recovers to a minted id and drops the stale field.
+    const next = startTurn('sess-old', 'next prompt', dir);
+    assert.match(next.traceId || '', /^[0-9a-f]{32}$/);
+    assert.equal(next.turn, 14);
+    assert.equal(next.startedAt, '2026-09-20T09:00:00.000Z');
+    assert.ok(!('spanId' in next));
+  });
 });

@@ -1,5 +1,5 @@
 import { debugLog } from './debug';
-import { checkCircuitBreaker, tripCircuitBreaker } from './rtgCircuitBreaker';
+import { isCircuitOpen, openCircuit } from './rtgCircuitBreaker';
 import { CedarRequest, RtgResult, RevaConfig } from './types';
 
 const RTG_UNAVAILABLE = 'RTG_UNAVAILABLE';
@@ -13,7 +13,6 @@ const RTG_NOT_FOUND = 'RTG_NOT_FOUND';
 // 401 is rarer and more likely to reflect a slower-moving problem (e.g.
 // principal provisioning) than a transient RTG blip, so it gets a much
 // longer window than anything else here — see rtgCircuitBreaker.ts.
-const DISABLE_MS_UNAUTHORIZED = 4 * 60 * 60 * 1000; // 4 hours
 
 class RtgTimeoutError extends Error {}
 
@@ -67,6 +66,7 @@ async function postJson(
   url: string,
   body: unknown,
   traceparent?: string,
+  threadId?: string,
 ): Promise<RtgHttpResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), cfg.timeoutMs);
@@ -81,6 +81,13 @@ async function postJson(
           'X-Reva-Verification-Codes': 'CODE_USER_SCOPE',
           ...(cfg.authorization ? { 'X-API-Token': cfg.authorization } : {}),
           ...(traceparent ? { traceparent } : {}),
+          // The chat itself — Claude Code's own session_id, unchanged for
+          // every call in the conversation. Deliberately a header of its own
+          // rather than folded into traceparent: the trace id now scopes to a
+          // single prompt, so without this there would be nothing tying one
+          // prompt's calls to the next prompt's. RTG only; ingestion does not
+          // send it.
+          ...(threadId ? { 'X-Reva-Thread-Id': threadId } : {}),
         },
         body: JSON.stringify(body),
         signal: controller.signal,
@@ -99,8 +106,13 @@ async function postJson(
   }
 }
 
-async function postToRtg(cfg: RevaConfig, request: CedarRequest, traceparent: string): Promise<RtgHttpResponse> {
-  return postJson(cfg, cfg.rtgUrl, request, traceparent);
+async function postToRtg(
+  cfg: RevaConfig,
+  request: CedarRequest,
+  traceparent: string,
+  threadId?: string,
+): Promise<RtgHttpResponse> {
+  return postJson(cfg, cfg.rtgUrl, request, traceparent, threadId);
 }
 
 // Only 401 and 413 fail open here — everything else operational (404, 424,
@@ -111,17 +123,26 @@ async function postToRtg(cfg: RevaConfig, request: CedarRequest, traceparent: st
 // branches below — everything else must reach Claude Code as an explicit
 // deny (inactive would suppress that and let the action through).
 //
-// 401 additionally trips the circuit breaker (rtgCircuitBreaker.ts) for 4
-// hours: since 401 fails OPEN (unlike everything else here), repeatedly
-// hitting an unauthorized/unprovisioned RTG would otherwise allow every
-// single call for as long as the underlying problem lasts — the breaker
-// caps how long that open window can last without a fresh check. Nothing
-// else here trips it: 404/424/5xx/429 already fail closed on every call, so
-// there's no "keep allowing" window that needs capping.
-function handleOperationalStatuses(res: RtgHttpResponse, cfg: RevaConfig, pluginDataDir: string | undefined): RtgResult | undefined {
+// 401 additionally latches the circuit open FOR THIS SESSION
+// (rtgCircuitBreaker.ts): since 401 fails OPEN (unlike everything else
+// here), repeatedly hitting an unauthorized RTG would otherwise allow every
+// single call for as long as the problem lasts. The latch stops the retrying
+// without pretending the session is governed. It does not expire and there
+// is no recovery within the session — starting a new session IS the
+// recovery, and a new session always makes a real call. Nothing else here
+// latches it: 404/424/5xx/429 already fail closed on every call, so there is
+// no "keep allowing" window to bound.
+function handleOperationalStatuses(
+  res: RtgHttpResponse,
+  cfg: RevaConfig,
+  pluginDataDir: string | undefined,
+  sessionId: string | undefined,
+): RtgResult | undefined {
   if (res.status === 401) {
     const errorType = errorTypeOf(res.json) || UNAUTHORIZED;
-    tripCircuitBreaker(cfg.agentId, DISABLE_MS_UNAUTHORIZED, res.status, errorType, pluginDataDir);
+    // Keyed by session, so one session's 401 never silences another —
+    // including one started after the underlying problem was fixed.
+    if (sessionId) openCircuit(sessionId, res.status, errorType, pluginDataDir);
     return {
       decision: 'deny',
       inactive: true,
@@ -204,24 +225,31 @@ export async function evaluate(
   request: CedarRequest,
   traceparent: string,
   pluginDataDir?: string,
+  threadId?: string,
 ): Promise<RtgResult> {
-  const breaker = checkCircuitBreaker(cfg.agentId, pluginDataDir);
-  if (breaker.disabled) {
-    debugLog(`evaluate: RTG not called — circuit breaker open until ${new Date(breaker.disabledUntil!).toISOString()}`);
+  // With no session id there is nothing to key a latch by, so the call is
+  // simply made — a 401 then fails open per-call, exactly as it would have
+  // before any latch existed.
+  const breaker = threadId ? isCircuitOpen(threadId, pluginDataDir) : { open: false as const };
+  if (breaker.open) {
+    debugLog(
+      `evaluate: RTG not called — circuit open for this session since ${new Date(breaker.openedAt!).toISOString()} ` +
+        `(HTTP ${breaker.triggeredStatus}${breaker.errorType ? ` ${breaker.errorType}` : ''}); a new session will call again`,
+    );
     return {
       decision: 'allow',
       inactive: true,
-      reason: `Reva RTG is temporarily disabled until ${new Date(breaker.disabledUntil!).toISOString()} (last error: HTTP ${breaker.triggeredStatus}${
+      reason: `Reva RTG is unavailable for this session (HTTP ${breaker.triggeredStatus}${
         breaker.errorType ? ` ${breaker.errorType}` : ''
-      }) — failing open for this request`,
+      } at ${new Date(breaker.openedAt!).toISOString()}) — failing open for this request`,
       errorType: breaker.errorType,
       status: breaker.triggeredStatus,
-      raw: { circuitBreakerOpen: true, disabledUntil: breaker.disabledUntil },
+      raw: { circuitOpen: true, openedAt: breaker.openedAt },
     };
   }
 
   try {
-    const res = await postToRtg(cfg, request, traceparent);
+    const res = await postToRtg(cfg, request, traceparent, threadId);
     // Logged once here, centrally, so every caller gets it for free rather
     // than each hook needing to remember to log the response itself — the
     // existing per-hook "<- decision=..." lines only summarize the outcome
@@ -264,7 +292,7 @@ export async function evaluate(
       };
     }
 
-    const operational = handleOperationalStatuses(res, cfg, pluginDataDir);
+    const operational = handleOperationalStatuses(res, cfg, pluginDataDir, threadId);
     if (operational) return operational;
 
     // Every other status (including 429) is a real denial — e.g. policy or

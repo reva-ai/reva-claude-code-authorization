@@ -62,14 +62,15 @@ A short version of the table in [SECURITY.md](../SECURITY.md#what-blocks-and-wha
 | Policy denies (403) | **blocked** |
 | Guardrails return `conditional_allow` | Claude Code **asks** you |
 | Reva unreachable, times out, or errors (5xx, 424, 404) | **blocked, every action** — fails closed |
-| Token rejected (401) | **passes through for up to 4 hours** — fails open |
+| Token rejected (401) | **passes through for the rest of that session** — fails open |
 | Payload too large (413) | **passes through** — fails open |
 | `REVA_AUTH_TOKEN` or `REVA_AGENT_ID` missing | **blocked, every action** — fails closed |
 
 Governance holds through a Reva-side outage: an unreachable or erroring RTG blocks rather
 than silently letting actions through. The exceptions are a rejected token (401), which
-passes through for up to 4 hours because it usually means a principal that is not
-provisioned yet, and an oversized payload (413), which concerns one request only. A
+passes through for the rest of that session because it usually means a principal that is
+not provisioned yet, and an oversized payload (413), which concerns one request only. A
+401 latches that session open with no retry; a new session calls the RTG again. A
 misconfiguration must never silently permit everything while appearing to govern.
 
 ## Policies

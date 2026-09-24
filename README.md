@@ -48,7 +48,7 @@ enforcement; an explicit Code entrypoint wins over an inherited Cowork flag.
 
 See [Desktop compatibility and investigation](docs/DESKTOP-COMPATIBILITY.md) for
 the runtime evidence, the `cowork_17092026` findings, update instructions, and
-the verification matrix. Version **1.1.0** is the first public release containing the
+the verification matrix. Version **1.1.0** was the first public release containing the
 isolation fix; an older
 installed or cached plugin will continue running its older code.
 
@@ -94,16 +94,17 @@ your repositories, `/tmp`, or your home directory.
 | Policy denies | **blocked** |
 | Guardrails return `conditional_allow` | Claude Code **asks** you |
 | Reva unreachable, times out, or errors (5xx, 424, 404) | **blocked, every action** — fails closed |
-| Token rejected (401) | **passes through for up to 4 hours** — fails open |
+| Token rejected (401) | **passes through for the rest of that session** — fails open |
 | Payload too large (413) | **passes through** — fails open |
 | `REVA_AUTH_TOKEN` or `REVA_AGENT_ID` missing | **blocked, every action** — fails closed |
 
 Governance holds even through a Reva-side outage: if the RTG is down, erroring, or
 unreachable, actions are blocked rather than silently let through. The two exceptions are a
-rejected token (401) — which passes through for up to 4 hours, since it more often reflects
-a principal that isn't provisioned yet than a real security failure, and re-checks itself
-automatically once that window expires — and an oversized payload (413), which is about that
-one request, not a sign Reva itself is unavailable.
+rejected token (401) — which passes through for the rest of that session, since it more
+often reflects a principal that isn't provisioned yet than a real security failure — and an
+oversized payload (413), which is about that one request, not a sign Reva itself is
+unavailable. A 401 latches the session open rather than retrying; the next session calls
+the RTG again, so starting one is how you pick up a repaired token.
 
 If you authenticate with `ANTHROPIC_API_KEY` rather than an OAuth login, `REVA_AGENT_ID`
 must be set explicitly or you will be blocked on every action —

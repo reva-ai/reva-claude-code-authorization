@@ -1,25 +1,31 @@
-import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { deriveTraceId, mintTraceId } from './trace';
 import { DirectEvalConversationMessage, DirectEvalSession } from './types';
 
 // PreToolUse hooks don't receive the user's prompt text directly — only
 // UserPromptSubmit does — and each hook invocation is a separate stateless
 // process, so there's no in-memory way to share state between them.
 //
-// Also used to pin the span id for an entire turn: rather than trusting
+// Also used to pin the TRACE id for an entire turn: rather than trusting
 // Claude Code's own prompt_id to reliably distinguish turns in every mode
 // (live testing showed it works via `-p --resume`, but not confirmed
 // identical in an interactive session), UserPromptSubmit mints its own
 // fresh id here and every PreToolUse call in that turn reads the same
 // value back — the plugin owns the turn boundary itself instead of relying
-// on an upstream field we don't fully control.
+// on an upstream field we don't fully control. Span ids are no longer
+// stored: they are derived per operation from this trace id (see trace.ts).
 //
 // Best-effort throughout: if the cache can't be written or read, actions
 // just proceed without turn-scoped context rather than failing.
 
 export interface TurnCacheEntry {
-  spanId: string;
+  // W3C trace id for THIS turn — one user prompt. Minted here and read back
+  // by every hook in the turn, so a prompt that fans out into many tool
+  // calls keeps a single trace across all of them. The next prompt mints a
+  // new one. Optional only because entries written before this field
+  // existed will not have it; see resolveTurnTraceId for that fallback.
+  traceId?: string;
   prompt?: string;
   promptTimestamp: string;
   turn: number;
@@ -46,7 +52,7 @@ export function truncatePrompt(prompt: string): string {
   return prompt.length > MAX_PROMPT_LENGTH ? `${prompt.slice(0, MAX_PROMPT_LENGTH)}…` : prompt;
 }
 
-// Call once per turn, from UserPromptSubmit. Mints a fresh span id and
+// Call once per turn, from UserPromptSubmit. Mints a fresh trace id and
 // persists it (overwriting any previous turn's entry for this session) so
 // this turn's PreToolUse calls can read it back. Returns the full turn entry.
 function saveTurn(sessionId: string, entry: TurnCacheEntry, pluginDataDir?: string): void {
@@ -64,12 +70,20 @@ function saveTurn(sessionId: string, entry: TurnCacheEntry, pluginDataDir?: stri
 export function startTurn(sessionId: string, prompt: string | undefined, pluginDataDir?: string): TurnCacheEntry {
   const previous = loadTurn(sessionId, pluginDataDir);
   const observedAt = new Date().toISOString();
-  const spanId = randomUUID().replace(/-/g, '').slice(0, 16);
+  const turn = (previous?.turn || 0) + 1;
+  // A minted trace id only works if it can be PERSISTED — every later hook in
+  // this turn is a separate process and reads it back from the cache. With no
+  // pluginDataDir there is nowhere to write it, so minting would hand each
+  // process a different random id and the turn would fragment into one trace
+  // per RTG call. Derive deterministically in that case instead: every
+  // process computes the same value from (session, turn) with no shared
+  // state, which is the same guarantee the cache would have provided.
+  const traceId = cacheFile(sessionId, pluginDataDir) ? mintTraceId() : deriveTraceId(sessionId, turn);
   const entry: TurnCacheEntry = {
-    spanId,
+    traceId,
     ...(prompt ? { prompt: truncatePrompt(prompt) } : {}),
     promptTimestamp: observedAt,
-    turn: (previous?.turn || 0) + 1,
+    turn,
     startedAt: previous?.startedAt || observedAt,
   };
   saveTurn(sessionId, entry, pluginDataDir);
@@ -111,4 +125,13 @@ export function conversationFromTurn(turn: TurnCacheEntry): DirectEvalConversati
       timestamp: turn.promptTimestamp,
     },
   ];
+}
+
+// The trace id every hook in this turn must agree on. Normally read straight
+// from the cache entry UserPromptSubmit wrote. The fallback covers an entry
+// written before traceId existed, or a turn whose cache write failed: it is
+// derived from (session, turn number), so separate hook processes still
+// compute the SAME value for the same turn without needing the cache.
+export function resolveTurnTraceId(sessionId: string, turn: TurnCacheEntry): string {
+  return turn.traceId || deriveTraceId(sessionId, turn.turn);
 }

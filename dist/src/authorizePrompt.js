@@ -67,11 +67,15 @@ async function main() {
     // first spawn is #1 again, not a continuation of every prior turn's
     // count (see spawnCounter.ts's own comment on why).
     (0, spawnCounter_1.resetSpawnCounter)(input.session_id, pluginDataDir);
-    const traceSession = (0, trace_1.buildSessionContext)(input.session_id, turn.spanId, input.prompt_id);
+    // This hook opens the turn, so its trace id is the one every tool call in
+    // the turn will read back. Its own span is the prompt evaluation itself.
+    const traceId = (0, turnCache_1.resolveTurnTraceId)(input.session_id, turn);
+    const spanId = (0, trace_1.deriveSpanId)(traceId, 'user-prompt');
+    const traceSession = (0, trace_1.buildSessionContext)(input.session_id, spanId, traceId, input.prompt_id);
     const traceparent = (0, trace_1.traceparentHeader)(traceSession.traceId, traceSession.spanId);
     const request = (0, invokeAgent_1.buildInvokeAgentRequest)(userEmail, cfg.agentId, prompt, (0, turnCache_1.directSessionFromTurn)(input.session_id, turn), activeSessionCount, currentSession, (0, deviceId_1.resolveMachineId)(pluginDataDir));
     (0, debug_1.debugLog)(`-> invokeAgent as ${userEmail} on Agent:${cfg.agentId}`);
-    const result = await (0, rtgClient_1.evaluate)(cfg, request, traceparent, pluginDataDir);
+    const result = await (0, rtgClient_1.evaluate)(cfg, request, traceparent, pluginDataDir, input.session_id);
     (0, debug_1.debugLog)(`<- decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
     // Record this invokeAgent as the base of this turn's hop chain regardless
     // of the decision, so a subsequent tool call (if the turn proceeds) has
@@ -88,6 +92,12 @@ async function main() {
     writeDecision(result);
 }
 main().catch((err) => {
+    // The ONLY record this denial leaves. writeDecision exits the process
+    // immediately after printing the hook response, so without this line a
+    // fail-closed deny is invisible everywhere except the UI toast the user
+    // sees — which is exactly why an intermittent config failure looked
+    // random and undiagnosable.
+    (0, debug_1.debugLog)(`UserPromptSubmit: FAILING CLOSED — ${err?.stack || err?.message || String(err)}`);
     writeDecision({
         decision: 'deny',
         reason: `Reva governance plugin internal error — failing closed (${err?.message || String(err)})`,

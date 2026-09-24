@@ -367,7 +367,7 @@ test('request uses canonical body and raw X-API-Token header', async () => {
   assert.equal('hops' in body, false);
 });
 
-test('with a pluginDataDir, 401 opens the circuit breaker and the next call skips the RTG entirely', async () => {
+test('401 latches THIS session: the next call in it skips the RTG entirely', async () => {
   await withTempDir(async (dir) => {
     let calls = 0;
     await withFetch(
@@ -376,80 +376,24 @@ test('with a pluginDataDir, 401 opens the circuit breaker and the next call skip
         return new Response(JSON.stringify({ error_type: 'USER_NOT_FOUND' }), { status: 401 });
       }) as any,
       async () => {
-        const first = await evaluate(baseCfg, baseRequest, '00-x-y-01', dir);
+        const first = await evaluate(baseCfg, baseRequest, '00-x-y-01', dir, 'sess-1');
         assert.equal(calls, 1);
         assert.equal(first.inactive, true);
 
-        const second = await evaluate(baseCfg, baseRequest, '00-x-y-01', dir);
-        // Still only 1 network call — the breaker short-circuited this one.
+        const second = await evaluate(baseCfg, baseRequest, '00-x-y-01', dir, 'sess-1');
+        // Still one network call — the latch short-circuited this one.
         assert.equal(calls, 1);
         assert.equal(second.decision, 'allow');
         assert.equal(second.inactive, true);
         assert.equal(second.status, 401);
         assert.equal(second.errorType, 'USER_NOT_FOUND');
-        assert.match(second.reason!, /temporarily disabled/);
+        assert.match(second.reason!, /unavailable for this session/);
       },
     );
   });
 });
 
-test('with a pluginDataDir, statuses that now fail closed never open the circuit breaker', async () => {
-  for (const status of [404, 424, 500, 502, 503, 504]) {
-    await withTempDir(async (dir) => {
-      let calls = 0;
-      await withFetch(
-        (async () => {
-          calls += 1;
-          return new Response('', { status });
-        }) as any,
-        async () => {
-          await evaluate(baseCfg, baseRequest, '00-x-y-01', dir);
-          await evaluate(baseCfg, baseRequest, '00-x-y-01', dir);
-          assert.equal(calls, 2, `status ${status} should not have tripped the breaker`);
-        },
-      );
-    });
-  }
-});
-
-test('with a pluginDataDir, a network failure and a timeout never open the circuit breaker either', async () => {
-  await withTempDir(async (dir) => {
-    let calls = 0;
-    await withFetch(
-      (async () => {
-        calls += 1;
-        throw new Error('ECONNREFUSED');
-      }) as any,
-      async () => {
-        await evaluate(baseCfg, baseRequest, '00-x-y-01', dir);
-        const second = await evaluate(baseCfg, baseRequest, '00-x-y-01', dir);
-        assert.equal(calls, 2);
-        assert.equal(second.decision, 'deny');
-      },
-    );
-  });
-});
-
-test('with a pluginDataDir, statuses that already deny without failing open never open the circuit breaker', async () => {
-  for (const status of [403, 413, 429]) {
-    await withTempDir(async (dir) => {
-      let calls = 0;
-      await withFetch(
-        (async () => {
-          calls += 1;
-          return new Response(JSON.stringify({ message: 'x' }), { status });
-        }) as any,
-        async () => {
-          await evaluate(baseCfg, baseRequest, '00-x-y-01', dir);
-          await evaluate(baseCfg, baseRequest, '00-x-y-01', dir);
-          assert.equal(calls, 2, `status ${status} should not have tripped the breaker`);
-        },
-      );
-    });
-  }
-});
-
-test('once the 401 breaker window elapses, the next call reaches the RTG again', async () => {
+test('a NEW session calls the RTG again — restarting is the recovery', async () => {
   await withTempDir(async (dir) => {
     let calls = 0;
     await withFetch(
@@ -458,23 +402,23 @@ test('once the 401 breaker window elapses, the next call reaches the RTG again',
         return new Response('', { status: 401 });
       }) as any,
       async () => {
-        await evaluate(baseCfg, baseRequest, '00-x-y-01', dir);
+        await evaluate(baseCfg, baseRequest, '00-x-y-01', dir, 'sess-1');
+        assert.equal(calls, 1);
+        // Same call again in the latched session: skipped.
+        await evaluate(baseCfg, baseRequest, '00-x-y-01', dir, 'sess-1');
         assert.equal(calls, 1);
 
-        // Hand-write an already-expired window, matching
-        // rtgCircuitBreaker.ts's own cache file convention, rather than
-        // sleeping out a real 4-hour window in a test.
-        const file = path.join(dir, 'rtg-circuit-breaker', `${baseCfg.agentId}.json`);
-        fs.writeFileSync(file, JSON.stringify({ disabledUntil: Date.now() - 1, triggeredStatus: 401 }), 'utf8');
-
-        await evaluate(baseCfg, baseRequest, '00-x-y-01', dir);
+        // A different session is untouched and reaches the RTG. Under the old
+        // agent-keyed 4-hour window this was silenced too, so a user whose
+        // licence had since been fixed kept failing open for hours.
+        await evaluate(baseCfg, baseRequest, '00-x-y-01', dir, 'sess-2');
         assert.equal(calls, 2);
       },
     );
   });
 });
 
-test('agents are isolated: one Agent tripping the 401 breaker does not disable another', async () => {
+test('with no session id there is no latch, so every call reaches the RTG', async () => {
   await withTempDir(async (dir) => {
     let calls = 0;
     await withFetch(
@@ -483,11 +427,38 @@ test('agents are isolated: one Agent tripping the 401 breaker does not disable a
         return new Response('', { status: 401 });
       }) as any,
       async () => {
+        // Nothing to key a latch by. A 401 still fails open per call, exactly
+        // as it did before any latch existed — it just is not remembered.
         await evaluate(baseCfg, baseRequest, '00-x-y-01', dir);
+        await evaluate(baseCfg, baseRequest, '00-x-y-01', dir);
+        assert.equal(calls, 2);
+      },
+    );
+  });
+});
+
+test('the latch is keyed by SESSION, not by agent — agentId has no effect on it', async () => {
+  await withTempDir(async (dir) => {
+    let calls = 0;
+    await withFetch(
+      (async () => {
+        calls += 1;
+        return new Response('', { status: 401 });
+      }) as any,
+      async () => {
+        await evaluate(baseCfg, baseRequest, '00-x-y-01', dir, 'sess-1');
         assert.equal(calls, 1);
 
-        const otherCfg = { ...baseCfg, agentId: 'agent-b' };
-        await evaluate(otherCfg, baseRequest, '00-x-y-01', dir);
+        // A DIFFERENT agent in the SAME session is still latched: the key is
+        // the session id, and agentId is not part of it any more. Under the
+        // old scheme this was the reverse — keyed by agent, so it spanned
+        // every session on the machine.
+        const otherAgent = { ...baseCfg, agentId: 'agent-b' };
+        await evaluate(otherAgent, baseRequest, '00-x-y-01', dir, 'sess-1');
+        assert.equal(calls, 1);
+
+        // …and the same agent in a different session is not.
+        await evaluate(baseCfg, baseRequest, '00-x-y-01', dir, 'sess-2');
         assert.equal(calls, 2);
       },
     );

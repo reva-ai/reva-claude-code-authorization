@@ -10,9 +10,9 @@ import { evaluate } from './rtgClient';
 import { skipOutsideCodeScope } from './runtimeScope';
 import { resetSpawnCounter } from './spawnCounter';
 import { readStdin } from './stdin';
-import { buildSessionContext, traceparentHeader } from './trace';
+import { buildSessionContext, deriveSpanId, traceparentHeader } from './trace';
 import { CedarHop, RtgResult, UserPromptSubmitInput } from './types';
-import { directSessionFromTurn, startTurn, truncatePrompt } from './turnCache';
+import { directSessionFromTurn, resolveTurnTraceId, startTurn, truncatePrompt } from './turnCache';
 
 // UserPromptSubmit uses a different, binary output schema than PreToolUse
 // (top-level decision:"block" vs hookSpecificOutput.permissionDecision).
@@ -80,7 +80,11 @@ async function main(): Promise<void> {
   // first spawn is #1 again, not a continuation of every prior turn's
   // count (see spawnCounter.ts's own comment on why).
   resetSpawnCounter(input.session_id, pluginDataDir);
-  const traceSession = buildSessionContext(input.session_id, turn.spanId, input.prompt_id);
+  // This hook opens the turn, so its trace id is the one every tool call in
+  // the turn will read back. Its own span is the prompt evaluation itself.
+  const traceId = resolveTurnTraceId(input.session_id, turn);
+  const spanId = deriveSpanId(traceId, 'user-prompt');
+  const traceSession = buildSessionContext(input.session_id, spanId, traceId, input.prompt_id);
   const traceparent = traceparentHeader(traceSession.traceId, traceSession.spanId);
 
   const request = buildInvokeAgentRequest(
@@ -94,7 +98,7 @@ async function main(): Promise<void> {
   );
 
   debugLog(`-> invokeAgent as ${userEmail} on Agent:${cfg.agentId}`);
-  const result = await evaluate(cfg, request, traceparent, pluginDataDir);
+  const result = await evaluate(cfg, request, traceparent, pluginDataDir, input.session_id);
   debugLog(`<- decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
 
   // Record this invokeAgent as the base of this turn's hop chain regardless
@@ -114,6 +118,12 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: any) => {
+  // The ONLY record this denial leaves. writeDecision exits the process
+  // immediately after printing the hook response, so without this line a
+  // fail-closed deny is invisible everywhere except the UI toast the user
+  // sees — which is exactly why an intermittent config failure looked
+  // random and undiagnosable.
+  debugLog(`UserPromptSubmit: FAILING CLOSED — ${err?.stack || err?.message || String(err)}`);
   writeDecision({
     decision: 'deny',
     reason: `Reva governance plugin internal error — failing closed (${err?.message || String(err)})`,

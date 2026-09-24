@@ -481,16 +481,15 @@ async function ingestAgent(cfg, agentEntityTypeId, agentId, userEmail, pluginDat
 // reasoning that the PATCH was best-effort and separate from what "known"
 // tracks. Confirmed live that was wrong in practice: a single failed bulk
 // PATCH permanently hid real gaps, since the entry was marked known anyway
-// and never retried — two of six real connectors on one real account got
-// stuck exactly this way, silently absent from the real User entity
-// forever. A remote entry follows the same principle and always did: known
+// and never retried — connectors observed stuck exactly this way,
+// silently absent from the User entity forever. A remote entry follows the same principle and always did: known
 // only if the MCPServer POST succeeds. The one real difference bulk
 // introduces on that side: since the POST is one atomic call for every
 // remote entry in this pass rather than one call per entry, a single
 // failure (or a transient blip) holds back known-marking for the whole
 // batch, not just the one entry that would have actually failed — an
 // inherent consequence of the bulk endpoint's own atomicity (confirmed via
-// reva-pip's source — see this file's top comment), not a choice made
+// the service's own source — see this file's top comment), not a choice made
 // here.
 //
 // userEntityTypeId/userEmail are optional so a caller that only has
@@ -511,11 +510,11 @@ async function ingestDiscoveredMcpServers(cfg, mcpServerEntityTypeId, cwd, plugi
     // whether this PATCH actually succeeded — so a single failed bulk PATCH
     // (for any reason — a stale id that even the retry couldn't recover,
     // a transient error) silently and permanently hid real gaps. Two of six
-    // real connectors on this exact account were stuck exactly this way:
+    // real connectors were observed stuck exactly this way:
     // marked known locally, never actually present in registeredMcpServers
     // on the real User entity, and never retried again.
     // ONE SINGLE-ENTITY PATCH PER NAME — deliberately not the bulk endpoint.
-    // Live-confirmed on a real tenant that PATCH /entity/bulk does NOT honour
+    // Confirmed against a live deployment that PATCH /entity/bulk does not honour
     // op:"ADD" as a Set append: a single request carrying eight ADD ops for
     // registeredMcpServers returned 200 and left the attribute holding exactly
     // ONE value, as though each op overwrote the last. The single endpoint,

@@ -61,9 +61,9 @@ async function main(): Promise<void> {
   // too, but it is detached: without this, tool calls racing ahead of that
   // child emit the raw uuid while later ones emit the slug, putting ONE
   // connector under two different ids inside a single session's audit
-  // trail. Measured at 66-99ms of purely local file I/O on a real machine
-  // with 27 desktop session files — cheap next to the network calls this
-  // hook already blocks on, and worth it to make the ids consistent.
+  // trail. Measured in the tens of milliseconds of purely local file I/O —
+  // cheap next to the network calls this hook already blocks on, and worth
+  // it to make the ids consistent.
   //
   // Deliberately before loadConfig(): this is local bookkeeping that must
   // work on a machine with no valid Reva token at all.

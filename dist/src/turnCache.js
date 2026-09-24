@@ -39,9 +39,10 @@ exports.loadTurn = loadTurn;
 exports.loadOrStartTurn = loadOrStartTurn;
 exports.directSessionFromTurn = directSessionFromTurn;
 exports.conversationFromTurn = conversationFromTurn;
-const node_crypto_1 = require("node:crypto");
+exports.resolveTurnTraceId = resolveTurnTraceId;
 const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
+const trace_1 = require("./trace");
 const MAX_PROMPT_LENGTH = 2000;
 // No fallback: only ever writes inside CLAUDE_PLUGIN_DATA (Claude Code's
 // own per-plugin data directory — the officially documented mechanism for
@@ -59,7 +60,7 @@ function cacheFile(sessionId, pluginDataDir) {
 function truncatePrompt(prompt) {
     return prompt.length > MAX_PROMPT_LENGTH ? `${prompt.slice(0, MAX_PROMPT_LENGTH)}…` : prompt;
 }
-// Call once per turn, from UserPromptSubmit. Mints a fresh span id and
+// Call once per turn, from UserPromptSubmit. Mints a fresh trace id and
 // persists it (overwriting any previous turn's entry for this session) so
 // this turn's PreToolUse calls can read it back. Returns the full turn entry.
 function saveTurn(sessionId, entry, pluginDataDir) {
@@ -78,12 +79,20 @@ function saveTurn(sessionId, entry, pluginDataDir) {
 function startTurn(sessionId, prompt, pluginDataDir) {
     const previous = loadTurn(sessionId, pluginDataDir);
     const observedAt = new Date().toISOString();
-    const spanId = (0, node_crypto_1.randomUUID)().replace(/-/g, '').slice(0, 16);
+    const turn = (previous?.turn || 0) + 1;
+    // A minted trace id only works if it can be PERSISTED — every later hook in
+    // this turn is a separate process and reads it back from the cache. With no
+    // pluginDataDir there is nowhere to write it, so minting would hand each
+    // process a different random id and the turn would fragment into one trace
+    // per RTG call. Derive deterministically in that case instead: every
+    // process computes the same value from (session, turn) with no shared
+    // state, which is the same guarantee the cache would have provided.
+    const traceId = cacheFile(sessionId, pluginDataDir) ? (0, trace_1.mintTraceId)() : (0, trace_1.deriveTraceId)(sessionId, turn);
     const entry = {
-        spanId,
+        traceId,
         ...(prompt ? { prompt: truncatePrompt(prompt) } : {}),
         promptTimestamp: observedAt,
-        turn: (previous?.turn || 0) + 1,
+        turn,
         startedAt: previous?.startedAt || observedAt,
     };
     saveTurn(sessionId, entry, pluginDataDir);
@@ -125,4 +134,12 @@ function conversationFromTurn(turn) {
             timestamp: turn.promptTimestamp,
         },
     ];
+}
+// The trace id every hook in this turn must agree on. Normally read straight
+// from the cache entry UserPromptSubmit wrote. The fallback covers an entry
+// written before traceId existed, or a turn whose cache write failed: it is
+// derived from (session, turn number), so separate hook processes still
+// compute the SAME value for the same turn without needing the cache.
+function resolveTurnTraceId(sessionId, turn) {
+    return turn.traceId || (0, trace_1.deriveTraceId)(sessionId, turn.turn);
 }

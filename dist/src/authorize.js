@@ -75,8 +75,13 @@ async function main() {
     // turn. If no boundary exists, loadOrStartTurn records this first event as
     // the observed turn instead of inventing prior history.
     const turn = (0, turnCache_1.loadOrStartTurn)(input.session_id, pluginDataDir);
-    const spanId = turn.spanId || (0, trace_1.buildTraceId)(input.session_id).slice(0, 16);
-    const traceSession = (0, trace_1.buildSessionContext)(input.session_id, spanId, input.prompt_id);
+    // trace = this turn (shared by every call the prompt fans out into),
+    // span = this tool call. The span key is tool_name + tool_input, which
+    // PostToolUse sees identically, so the pre/post pair shares one span
+    // without either process having to tell the other anything.
+    const traceId = (0, turnCache_1.resolveTurnTraceId)(input.session_id, turn);
+    const spanId = (0, trace_1.deriveSpanId)(traceId, `tool:${input.tool_name}:${JSON.stringify(input.tool_input || {})}`);
+    const traceSession = (0, trace_1.buildSessionContext)(input.session_id, spanId, traceId, input.prompt_id);
     const traceparent = (0, trace_1.traceparentHeader)(traceSession.traceId, traceSession.spanId);
     // Cumulative spawn count for this session — only computed (and only
     // increments) for actual Task spawns, so unrelated tool calls don't
@@ -137,7 +142,7 @@ async function main() {
         (0, hopChain_1.enqueuePendingSpawnLineage)(input.session_id, hops, spawnHop, pluginDataDir);
     }
     (0, debug_1.debugLog)(`-> ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}${subagentIndex !== undefined ? `, subagentIndex=${subagentIndex}` : ''}, hops=${hops.length})`);
-    const result = await (0, rtgClient_1.evaluate)(cfg, request, traceparent, pluginDataDir);
+    const result = await (0, rtgClient_1.evaluate)(cfg, request, traceparent, pluginDataDir, input.session_id);
     (0, debug_1.debugLog)(`<- decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
     writeDecision(result);
 }
@@ -145,6 +150,12 @@ main().catch((err) => {
     // Any unexpected failure (bad stdin JSON, mapping bug, etc.) must still
     // fail closed rather than let an uncaught exception exit non-zero, which
     // Claude Code treats as a non-blocking error and lets the tool call through.
+    // The ONLY record this denial leaves. writeDecision exits the process
+    // immediately after printing the hook response, so without this line a
+    // fail-closed deny is invisible everywhere except the UI toast the user
+    // sees — which is exactly why an intermittent config failure looked
+    // random and undiagnosable.
+    (0, debug_1.debugLog)(`PreToolUse: FAILING CLOSED — ${err?.stack || err?.message || String(err)}`);
     writeDecision({
         decision: 'deny',
         reason: `Reva governance plugin internal error — failing closed (${err?.message || String(err)})`,

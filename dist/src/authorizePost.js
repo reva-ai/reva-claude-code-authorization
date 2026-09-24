@@ -53,8 +53,13 @@ async function main() {
     const agentCtx = (0, identity_1.resolveAgentContext)(cfg.agentId, input);
     const mapping = (0, mapping_1.mapToolToCedar)(input.tool_name, input.tool_input || {}, input.cwd);
     const turn = (0, turnCache_1.loadOrStartTurn)(input.session_id, pluginDataDir);
-    const spanId = turn.spanId || (0, trace_1.buildTraceId)(input.session_id).slice(0, 16);
-    const traceSession = (0, trace_1.buildSessionContext)(input.session_id, spanId, input.prompt_id);
+    // trace = this turn (shared by every call the prompt fans out into),
+    // span = this tool call. The span key is tool_name + tool_input, which
+    // PostToolUse sees identically, so the pre/post pair shares one span
+    // without either process having to tell the other anything.
+    const traceId = (0, turnCache_1.resolveTurnTraceId)(input.session_id, turn);
+    const spanId = (0, trace_1.deriveSpanId)(traceId, `tool:${input.tool_name}:${JSON.stringify(input.tool_input || {})}`);
+    const traceSession = (0, trace_1.buildSessionContext)(input.session_id, spanId, traceId, input.prompt_id);
     const traceparent = (0, trace_1.traceparentHeader)(traceSession.traceId, traceSession.spanId);
     const userEmail = (0, identity_1.resolveUserEmail)();
     const userDescriptor = (0, entity_1.buildEntityDescriptor)('User', userEmail);
@@ -88,11 +93,17 @@ async function main() {
         session: (0, turnCache_1.directSessionFromTurn)(input.session_id, turn),
     };
     (0, debug_1.debugLog)(`-> post ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}, hops=${hops.length})`);
-    const result = await (0, rtgClient_1.evaluate)(cfg, request, traceparent, pluginDataDir);
+    const result = await (0, rtgClient_1.evaluate)(cfg, request, traceparent, pluginDataDir, input.session_id);
     (0, debug_1.debugLog)(`<- post decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
     writeDecision(result);
 }
 main().catch((err) => {
+    // The ONLY record this denial leaves. writeDecision exits the process
+    // immediately after printing the hook response, so without this line a
+    // fail-closed deny is invisible everywhere except the UI toast the user
+    // sees — which is exactly why an intermittent config failure looked
+    // random and undiagnosable.
+    (0, debug_1.debugLog)(`PostToolUse: FAILING CLOSED — ${err?.stack || err?.message || String(err)}`);
     writeDecision({
         decision: 'deny',
         reason: `Reva governance plugin internal error — failing closed (${err?.message || String(err)})`,
