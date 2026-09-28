@@ -10,10 +10,6 @@ const RTG_FAILED_DEPENDENCY = 'RTG_FAILED_DEPENDENCY';
 const RTG_PAYLOAD_TOO_LARGE = 'RTG_PAYLOAD_TOO_LARGE';
 const RTG_NOT_FOUND = 'RTG_NOT_FOUND';
 
-// 401 is rarer and more likely to reflect a slower-moving problem (e.g.
-// principal provisioning) than a transient RTG blip, so it gets a much
-// longer window than anything else here — see rtgCircuitBreaker.ts.
-
 class RtgTimeoutError extends Error {}
 
 interface RtgHttpResponse {

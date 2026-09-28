@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { isCircuitOpen } from './rtgCircuitBreaker';
 
 // Tracks which session_ids are currently active on THIS machine, keyed by
 // Agent id (the account id everything else in this plugin uses — see
@@ -18,6 +19,14 @@ import * as path from 'node:path';
 // seen in ACTIVE_TTL_MS is treated as gone and pruned outright on the next
 // read or write, not just filtered out at read time, so this file can't
 // grow unbounded even if SessionEnd never runs at all.
+//
+// A session that has taken a 401 (latched in rtgCircuitBreaker.ts) is
+// written off for good — every later call in it skips the RTG — so it is
+// not counted as active either, whether the 401 came on its very first call
+// or partway through. The latch file is the source of truth: a latched
+// session is dropped on every read and never (re-)registered, so no caller
+// has to remember to remove it, and a concurrent hook that loaded the file
+// before the 401 cannot resurrect it.
 //
 // Deliberately local-only: this has no visibility into other machines, so
 // it can only ever answer "how many sessions on THIS machine," not a true
@@ -78,13 +87,14 @@ function saveState(agentId: string, state: ActiveSessionsState, pluginDataDir?: 
   }
 }
 
-// Drops any entry not seen within ACTIVE_TTL_MS — called on every write so
-// the file can't accumulate sessions that closed hours/days ago.
-function pruneStale(state: ActiveSessionsState): ActiveSessionsState {
+// Drops any entry not seen within ACTIVE_TTL_MS, or whose session has been
+// latched by a 401 — called on every read and write so the file can't
+// accumulate sessions that closed hours/days ago or were written off.
+function pruneInactive(state: ActiveSessionsState, pluginDataDir?: string): ActiveSessionsState {
   const now = Date.now();
   const sessions: Record<string, SessionEntry> = {};
   for (const [sessionId, entry] of Object.entries(state.sessions)) {
-    if (now - entry.lastSeen < ACTIVE_TTL_MS) {
+    if (now - entry.lastSeen < ACTIVE_TTL_MS && !isCircuitOpen(sessionId, pluginDataDir).open) {
       sessions[sessionId] = entry;
     }
   }
@@ -105,15 +115,16 @@ export interface ActiveSession {
 // session keeps being used). See markSessionInactive below for the
 // counterpart that removes an entry on SessionEnd. Returns undefined for
 // an empty/missing sessionId — nothing honest to record (avoids a literal
-// "undefined" key) or report.
+// "undefined" key) or report — and likewise for a session latched by a 401,
+// which is never counted as active.
 export function markSessionActive(
   agentId: string,
   sessionId: string,
   entrypoint: string,
   pluginDataDir?: string,
 ): ActiveSession | undefined {
-  if (!sessionId) return undefined;
-  const state = pruneStale(loadState(agentId, pluginDataDir));
+  if (!sessionId || isCircuitOpen(sessionId, pluginDataDir).open) return undefined;
+  const state = pruneInactive(loadState(agentId, pluginDataDir), pluginDataDir);
   const entry: SessionEntry = { entrypoint, lastSeen: Date.now() };
   state.sessions[sessionId] = entry;
   saveState(agentId, state, pluginDataDir);
@@ -126,7 +137,7 @@ export function markSessionActive(
 // including the caller's own — so 1 means only this session is active, 2+
 // means at least one other tab/window/app is also running right now.
 export function getActiveSessions(agentId: string, pluginDataDir?: string): ActiveSession[] {
-  const state = pruneStale(loadState(agentId, pluginDataDir));
+  const state = pruneInactive(loadState(agentId, pluginDataDir), pluginDataDir);
   return Object.entries(state.sessions).map(([sessionId, entry]) => ({ sessionId, ...entry }));
 }
 
@@ -152,7 +163,7 @@ export function getSessionEntry(agentId: string, sessionId: string, pluginDataDi
 // ACTIVE_TTL_MS after it's actually gone.
 export function markSessionInactive(agentId: string, sessionId: string, pluginDataDir?: string): void {
   if (!sessionId) return;
-  const state = pruneStale(loadState(agentId, pluginDataDir));
+  const state = pruneInactive(loadState(agentId, pluginDataDir), pluginDataDir);
   if (sessionId in state.sessions) {
     delete state.sessions[sessionId];
     saveState(agentId, state, pluginDataDir);

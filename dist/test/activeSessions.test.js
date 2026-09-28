@@ -42,6 +42,7 @@ const os = __importStar(require("node:os"));
 const path = __importStar(require("node:path"));
 const node_test_1 = require("node:test");
 const activeSessions_1 = require("../src/activeSessions");
+const rtgCircuitBreaker_1 = require("../src/rtgCircuitBreaker");
 function withTempDir(fn) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reva-governance-active-sessions-'));
     try {
@@ -207,4 +208,36 @@ function cacheFile(dir, agentId) {
 });
 (0, node_test_1.test)('with no pluginDataDir, markSessionInactive is a harmless no-op — must not throw', () => {
     strict_1.default.doesNotThrow(() => (0, activeSessions_1.markSessionInactive)('agent-1', 'sess-1', undefined));
+});
+(0, node_test_1.test)('a session whose FIRST RTG call took a 401 is not counted, and later hooks do not re-register it', () => {
+    withTempDir((dir) => {
+        (0, activeSessions_1.markSessionActive)('agent-1', 'sess-ok', 'cli', dir);
+        (0, activeSessions_1.markSessionActive)('agent-1', 'sess-401', 'cli', dir); // SessionStart
+        (0, rtgCircuitBreaker_1.openCircuit)('sess-401', 401, 'USER_NOT_FOUND', dir); // first UserPromptSubmit
+        strict_1.default.equal((0, activeSessions_1.getActiveSessionCount)('agent-1', dir), 1);
+        strict_1.default.equal((0, activeSessions_1.getSessionEntry)('agent-1', 'sess-401', dir), undefined);
+        // Every later hook in the latched session still calls markSessionActive.
+        strict_1.default.equal((0, activeSessions_1.markSessionActive)('agent-1', 'sess-401', 'cli', dir), undefined);
+        strict_1.default.deepEqual((0, activeSessions_1.getActiveSessions)('agent-1', dir).map((s) => s.sessionId), ['sess-ok']);
+    });
+});
+(0, node_test_1.test)('a session that takes a 401 partway through drops out of the count', () => {
+    withTempDir((dir) => {
+        (0, activeSessions_1.markSessionActive)('agent-1', 'sess-1', 'cli', dir);
+        (0, activeSessions_1.markSessionActive)('agent-1', 'sess-2', 'cli', dir);
+        strict_1.default.equal((0, activeSessions_1.getActiveSessionCount)('agent-1', dir), 2);
+        (0, rtgCircuitBreaker_1.openCircuit)('sess-2', 401, 'USER_DISABLED', dir);
+        strict_1.default.equal((0, activeSessions_1.getActiveSessionCount)('agent-1', dir), 1);
+        // Pruned from disk on the next write, not just filtered at read time.
+        (0, activeSessions_1.markSessionActive)('agent-1', 'sess-1', 'cli', dir);
+        const onDisk = JSON.parse(fs.readFileSync(cacheFile(dir, 'agent-1'), 'utf8'));
+        strict_1.default.deepEqual(Object.keys(onDisk.sessions), ['sess-1']);
+    });
+});
+(0, node_test_1.test)('a latched session resumed later (same session_id) stays out of the count', () => {
+    withTempDir((dir) => {
+        (0, rtgCircuitBreaker_1.openCircuit)('sess-1', 401, 'UNAUTHORIZED', dir);
+        (0, activeSessions_1.markSessionActive)('agent-1', 'sess-1', 'cli', dir); // SessionStart source=resume
+        strict_1.default.equal((0, activeSessions_1.getActiveSessionCount)('agent-1', dir), 0);
+    });
 });

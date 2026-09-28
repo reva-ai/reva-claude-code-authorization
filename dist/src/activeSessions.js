@@ -40,6 +40,7 @@ exports.getSessionEntry = getSessionEntry;
 exports.markSessionInactive = markSessionInactive;
 const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
+const rtgCircuitBreaker_1 = require("./rtgCircuitBreaker");
 const ACTIVE_TTL_MS = 10 * 60 * 1000; // no activity for 10 minutes ⇒ treated as gone
 // No fallback: only ever writes inside CLAUDE_PLUGIN_DATA (Claude Code's
 // own per-plugin data directory, ~/.claude/plugins/data/{id}/ — the
@@ -82,13 +83,14 @@ function saveState(agentId, state, pluginDataDir) {
         // best effort — the next call just tries again
     }
 }
-// Drops any entry not seen within ACTIVE_TTL_MS — called on every write so
-// the file can't accumulate sessions that closed hours/days ago.
-function pruneStale(state) {
+// Drops any entry not seen within ACTIVE_TTL_MS, or whose session has been
+// latched by a 401 — called on every read and write so the file can't
+// accumulate sessions that closed hours/days ago or were written off.
+function pruneInactive(state, pluginDataDir) {
     const now = Date.now();
     const sessions = {};
     for (const [sessionId, entry] of Object.entries(state.sessions)) {
-        if (now - entry.lastSeen < ACTIVE_TTL_MS) {
+        if (now - entry.lastSeen < ACTIVE_TTL_MS && !(0, rtgCircuitBreaker_1.isCircuitOpen)(sessionId, pluginDataDir).open) {
             sessions[sessionId] = entry;
         }
     }
@@ -102,11 +104,12 @@ function pruneStale(state) {
 // session keeps being used). See markSessionInactive below for the
 // counterpart that removes an entry on SessionEnd. Returns undefined for
 // an empty/missing sessionId — nothing honest to record (avoids a literal
-// "undefined" key) or report.
+// "undefined" key) or report — and likewise for a session latched by a 401,
+// which is never counted as active.
 function markSessionActive(agentId, sessionId, entrypoint, pluginDataDir) {
-    if (!sessionId)
+    if (!sessionId || (0, rtgCircuitBreaker_1.isCircuitOpen)(sessionId, pluginDataDir).open)
         return undefined;
-    const state = pruneStale(loadState(agentId, pluginDataDir));
+    const state = pruneInactive(loadState(agentId, pluginDataDir), pluginDataDir);
     const entry = { entrypoint, lastSeen: Date.now() };
     state.sessions[sessionId] = entry;
     saveState(agentId, state, pluginDataDir);
@@ -118,7 +121,7 @@ function markSessionActive(agentId, sessionId, entrypoint, pluginDataDir) {
 // including the caller's own — so 1 means only this session is active, 2+
 // means at least one other tab/window/app is also running right now.
 function getActiveSessions(agentId, pluginDataDir) {
-    const state = pruneStale(loadState(agentId, pluginDataDir));
+    const state = pruneInactive(loadState(agentId, pluginDataDir), pluginDataDir);
     return Object.entries(state.sessions).map(([sessionId, entry]) => ({ sessionId, ...entry }));
 }
 function getActiveSessionCount(agentId, pluginDataDir) {
@@ -142,7 +145,7 @@ function getSessionEntry(agentId, sessionId, pluginDataDir) {
 function markSessionInactive(agentId, sessionId, pluginDataDir) {
     if (!sessionId)
         return;
-    const state = pruneStale(loadState(agentId, pluginDataDir));
+    const state = pruneInactive(loadState(agentId, pluginDataDir), pluginDataDir);
     if (sessionId in state.sessions) {
         delete state.sessions[sessionId];
         saveState(agentId, state, pluginDataDir);

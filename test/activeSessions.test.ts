@@ -10,6 +10,7 @@ import {
   markSessionActive,
   markSessionInactive,
 } from '../src/activeSessions';
+import { openCircuit } from '../src/rtgCircuitBreaker';
 
 function withTempDir(fn: (dir: string) => void): void {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reva-governance-active-sessions-'));
@@ -215,4 +216,46 @@ test('markSessionInactive only affects the given Agent, not others', () => {
 
 test('with no pluginDataDir, markSessionInactive is a harmless no-op — must not throw', () => {
   assert.doesNotThrow(() => markSessionInactive('agent-1', 'sess-1', undefined));
+});
+
+test('a session whose FIRST RTG call took a 401 is not counted, and later hooks do not re-register it', () => {
+  withTempDir((dir) => {
+    markSessionActive('agent-1', 'sess-ok', 'cli', dir);
+    markSessionActive('agent-1', 'sess-401', 'cli', dir); // SessionStart
+    openCircuit('sess-401', 401, 'USER_NOT_FOUND', dir); // first UserPromptSubmit
+
+    assert.equal(getActiveSessionCount('agent-1', dir), 1);
+    assert.equal(getSessionEntry('agent-1', 'sess-401', dir), undefined);
+
+    // Every later hook in the latched session still calls markSessionActive.
+    assert.equal(markSessionActive('agent-1', 'sess-401', 'cli', dir), undefined);
+    assert.deepEqual(
+      getActiveSessions('agent-1', dir).map((s) => s.sessionId),
+      ['sess-ok'],
+    );
+  });
+});
+
+test('a session that takes a 401 partway through drops out of the count', () => {
+  withTempDir((dir) => {
+    markSessionActive('agent-1', 'sess-1', 'cli', dir);
+    markSessionActive('agent-1', 'sess-2', 'cli', dir);
+    assert.equal(getActiveSessionCount('agent-1', dir), 2);
+
+    openCircuit('sess-2', 401, 'USER_DISABLED', dir);
+    assert.equal(getActiveSessionCount('agent-1', dir), 1);
+
+    // Pruned from disk on the next write, not just filtered at read time.
+    markSessionActive('agent-1', 'sess-1', 'cli', dir);
+    const onDisk = JSON.parse(fs.readFileSync(cacheFile(dir, 'agent-1'), 'utf8'));
+    assert.deepEqual(Object.keys(onDisk.sessions), ['sess-1']);
+  });
+});
+
+test('a latched session resumed later (same session_id) stays out of the count', () => {
+  withTempDir((dir) => {
+    openCircuit('sess-1', 401, 'UNAUTHORIZED', dir);
+    markSessionActive('agent-1', 'sess-1', 'cli', dir); // SessionStart source=resume
+    assert.equal(getActiveSessionCount('agent-1', dir), 0);
+  });
 });

@@ -5,6 +5,23 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] — 2026-09-28
+
+### Fixed
+
+- A session written off by a 401 is no longer counted as an active session. The latch in
+  `rtgCircuitBreaker.ts` already meant every later call in that session skipped the RTG, so
+  counting it among the concurrent sessions overstated how much of the machine was actually
+  governed. The latch file is now the source of truth: a latched session is dropped on every
+  read of the registry and never re-registered, so a concurrent hook that loaded the file
+  before the 401 cannot resurrect it.
+- Removed a comment in `rtgClient.ts` that still described the 4-hour breaker window
+  replaced in 1.2.0.
+- Re-applied against this development drop, which still branches from before `1.0.0`: the
+  `host` install-dialog option and its tests, `package.json`'s release metadata and
+  `package` script, `scripts/check-no-real-identifiers.mjs`, and the `surfaceIsolation`
+  assertion that fails unless `debug.log` is the only thing Cowork writes.
+
 ## [1.2.0] — 2026-09-24
 
 ### Added
@@ -129,6 +146,7 @@ First public release.
 - `src/config.ts` referred to a README "Testing" section that did not exist; it now points
   at `CONTRIBUTING.md`.
 
+[1.2.1]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.2.1
 [1.2.0]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.2.0
 [1.1.0]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.1.0
 [1.0.0]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.0.0

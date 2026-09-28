@@ -100,11 +100,11 @@ your repositories, `/tmp`, or your home directory.
 
 Governance holds even through a Reva-side outage: if the RTG is down, erroring, or
 unreachable, actions are blocked rather than silently let through. The two exceptions are a
-rejected token (401) — which passes through for the rest of that session, since it more
-often reflects a principal that isn't provisioned yet than a real security failure — and an
-oversized payload (413), which is about that one request, not a sign Reva itself is
-unavailable. A 401 latches the session open rather than retrying; the next session calls
-the RTG again, so starting one is how you pick up a repaired token.
+rejected token (401) — which passes through for the rest of that session, since it more often
+reflects a principal that isn't provisioned yet than a real security failure — and an oversized
+payload (413), which is about that one request, not a sign Reva itself is unavailable. After a
+401 the plugin stops calling Reva for that session; other
+sessions are unaffected, and starting a new session checks again.
 
 If you authenticate with `ANTHROPIC_API_KEY` rather than an OAuth login, `REVA_AGENT_ID`
 must be set explicitly or you will be blocked on every action —
@@ -140,3 +140,4 @@ Team rollout via `managed-settings.json`, token rotation, and uninstall are in
 ## License
 
 [Apache-2.0](LICENSE). See [NOTICE](NOTICE).
+
