@@ -72,8 +72,9 @@ async function main() {
     const hops = agentCtx.isSubAgent
         ? (0, hopChain_1.resolveSubAgentLineage)(input.session_id, agentCtx.subAgentId, pluginDataDir)
         : (0, hopChain_1.loadAgentHops)(input.session_id, pluginDataDir);
+    // Same current-hop prompt PreToolUse puts in transmission.userQuery.
     const serializedInput = JSON.stringify(input.tool_input || {});
-    const currentHopFallback = mapping.command?.trim() || mapping.pattern?.trim() ||
+    const currentHopContent = mapping.command?.trim() || mapping.pattern?.trim() ||
         (serializedInput !== '{}' ? serializedInput : input.tool_name);
     const request = {
         subject: (0, entity_1.directSpecOf)(subjectDescriptor),
@@ -87,9 +88,10 @@ async function main() {
             currentSession,
             machineId: (0, deviceId_1.resolveMachineId)(pluginDataDir),
         }),
-        // The tool result lives here — not in closed Cedar context — so the
-        // evaluate payload carries the actual response without a schema change.
-        transmission: (0, context_1.buildToolResponseTransmission)(input.tool_response, currentHopFallback),
+        // userQuery matches PreToolUse; the tool result is transmission.response,
+        // not closed Cedar context, so the evaluate payload carries it without a
+        // schema change.
+        transmission: (0, context_1.buildToolResponseTransmission)(input.tool_response, currentHopContent),
         session: (0, turnCache_1.directSessionFromTurn)(input.session_id, turn),
     };
     (0, debug_1.debugLog)(`-> post ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}, hops=${hops.length})`);

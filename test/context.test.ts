@@ -239,25 +239,29 @@ test('transmission uses canonical dynamic userQuery selector and semantic role',
   });
 });
 
-test('buildToolResponseTransmission puts a JSON tool_response in userQuery with role tool', () => {
+test('buildToolResponseTransmission keeps the PreToolUse query in userQuery and puts JSON tool_response in response', () => {
   const tx = buildToolResponseTransmission({ filePath: '/repo/a.ts', success: true }, 'Edit');
   assert.equal(tx.role, 'tool');
   assert.equal(tx.promptKey, 'userQuery');
-  assert.equal(tx.contentType, 'application/json');
-  assert.equal(tx.userQuery, JSON.stringify({ filePath: '/repo/a.ts', success: true }));
+  assert.equal(tx.contentType, 'text/plain');
+  assert.equal(tx.userQuery, 'Edit');
+  assert.equal(tx.response, JSON.stringify({ filePath: '/repo/a.ts', success: true }));
 });
 
-test('buildToolResponseTransmission keeps a string tool_response as text/plain', () => {
+test('buildToolResponseTransmission keeps a string tool_response in response and the original query in userQuery', () => {
   const tx = buildToolResponseTransmission('     1\thello\n', 'Read');
   assert.equal(tx.role, 'tool');
   assert.equal(tx.contentType, 'text/plain');
-  assert.equal(tx.userQuery, '     1\thello\n');
+  assert.equal(tx.userQuery, 'Read');
+  assert.equal(tx.response, '     1\thello\n');
 });
 
 test('serializeToolResponse treats null/undefined as empty string', () => {
   assert.equal(serializeToolResponse(undefined), '');
   assert.equal(serializeToolResponse(null), '');
-  assert.equal(buildToolResponseTransmission(undefined, 'Read').userQuery, 'Read');
+  const tx = buildToolResponseTransmission(undefined, 'Read');
+  assert.equal(tx.userQuery, 'Read');
+  assert.equal(tx.response, '');
 });
 
 test('serializeToolResponse truncates very long responses', () => {

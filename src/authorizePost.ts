@@ -89,8 +89,9 @@ async function main(): Promise<void> {
     ? resolveSubAgentLineage(input.session_id, agentCtx.subAgentId!, pluginDataDir)
     : loadAgentHops(input.session_id, pluginDataDir);
 
+  // Same current-hop prompt PreToolUse puts in transmission.userQuery.
   const serializedInput = JSON.stringify(input.tool_input || {});
-  const currentHopFallback =
+  const currentHopContent =
     mapping.command?.trim() || mapping.pattern?.trim() ||
     (serializedInput !== '{}' ? serializedInput : input.tool_name);
 
@@ -106,9 +107,10 @@ async function main(): Promise<void> {
       currentSession,
       machineId: resolveMachineId(pluginDataDir),
     }),
-    // The tool result lives here — not in closed Cedar context — so the
-    // evaluate payload carries the actual response without a schema change.
-    transmission: buildToolResponseTransmission(input.tool_response, currentHopFallback),
+    // userQuery matches PreToolUse; the tool result is transmission.response,
+    // not closed Cedar context, so the evaluate payload carries it without a
+    // schema change.
+    transmission: buildToolResponseTransmission(input.tool_response, currentHopContent),
     session: directSessionFromTurn(input.session_id, turn),
   };
 

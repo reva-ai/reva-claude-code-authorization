@@ -211,23 +211,27 @@ const CONTEXT_KEYS = [
         contentType: 'text/plain',
     });
 });
-(0, node_test_1.test)('buildToolResponseTransmission puts a JSON tool_response in userQuery with role tool', () => {
+(0, node_test_1.test)('buildToolResponseTransmission keeps the PreToolUse query in userQuery and puts JSON tool_response in response', () => {
     const tx = (0, context_1.buildToolResponseTransmission)({ filePath: '/repo/a.ts', success: true }, 'Edit');
     strict_1.default.equal(tx.role, 'tool');
     strict_1.default.equal(tx.promptKey, 'userQuery');
-    strict_1.default.equal(tx.contentType, 'application/json');
-    strict_1.default.equal(tx.userQuery, JSON.stringify({ filePath: '/repo/a.ts', success: true }));
+    strict_1.default.equal(tx.contentType, 'text/plain');
+    strict_1.default.equal(tx.userQuery, 'Edit');
+    strict_1.default.equal(tx.response, JSON.stringify({ filePath: '/repo/a.ts', success: true }));
 });
-(0, node_test_1.test)('buildToolResponseTransmission keeps a string tool_response as text/plain', () => {
+(0, node_test_1.test)('buildToolResponseTransmission keeps a string tool_response in response and the original query in userQuery', () => {
     const tx = (0, context_1.buildToolResponseTransmission)('     1\thello\n', 'Read');
     strict_1.default.equal(tx.role, 'tool');
     strict_1.default.equal(tx.contentType, 'text/plain');
-    strict_1.default.equal(tx.userQuery, '     1\thello\n');
+    strict_1.default.equal(tx.userQuery, 'Read');
+    strict_1.default.equal(tx.response, '     1\thello\n');
 });
 (0, node_test_1.test)('serializeToolResponse treats null/undefined as empty string', () => {
     strict_1.default.equal((0, context_1.serializeToolResponse)(undefined), '');
     strict_1.default.equal((0, context_1.serializeToolResponse)(null), '');
-    strict_1.default.equal((0, context_1.buildToolResponseTransmission)(undefined, 'Read').userQuery, 'Read');
+    const tx = (0, context_1.buildToolResponseTransmission)(undefined, 'Read');
+    strict_1.default.equal(tx.userQuery, 'Read');
+    strict_1.default.equal(tx.response, '');
 });
 (0, node_test_1.test)('serializeToolResponse truncates very long responses', () => {
     const long = 'x'.repeat(3000);

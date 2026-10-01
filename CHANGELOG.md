@@ -5,6 +5,28 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-10-01
+
+### Changed
+
+- **`PostToolUse` now carries the tool result in its own `transmission.response` field.**
+  It previously went in `transmission.userQuery`, which meant the field RTG derives its
+  managed prompt from held a tool result on one hook and a prompt on every other.
+  `userQuery` is now the same current-hop content `PreToolUse` sends — the command,
+  pattern, serialized tool input, or tool name — on both hooks, so one hop's request and
+  result line up. `contentType` is consequently always `text/plain` on `PostToolUse`,
+  where a JSON result previously forced `application/json`.
+- `SECURITY.md` records that `PostToolUse` now repeats the current-hop content alongside
+  the tool result. No new category of content leaves the machine — the command and tool
+  input were already transmitted at `PreToolUse` — but that hook sends more than it did.
+
+### Fixed
+
+- Re-applied against this development drop, which still branches from before `1.0.0`: the
+  `host` install-dialog option and its tests, `package.json`'s release metadata and
+  `package` script, `scripts/check-no-real-identifiers.mjs`, and the `surfaceIsolation`
+  assertion that fails unless `debug.log` is the only thing Cowork writes.
+
 ## [1.2.1] — 2026-09-28
 
 ### Fixed
@@ -146,6 +168,7 @@ First public release.
 - `src/config.ts` referred to a README "Testing" section that did not exist; it now points
   at `CONTRIBUTING.md`.
 
+[1.3.0]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.3.0
 [1.2.1]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.2.1
 [1.2.0]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.2.0
 [1.1.0]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.1.0

@@ -33,7 +33,7 @@ the complete set of content that leaves the machine.
 | `PreToolUse` (Bash) | The **full shell command**, verbatim. |
 | `PreToolUse` (Glob/Grep) | The search pattern. |
 | `PreToolUse` (all other tools) | `JSON.stringify(tool_input)` — the whole tool input object. For `Write` this includes **the file content being written**; for `Edit`, the **`old_string` and `new_string`**. |
-| `PostToolUse` | The **serialized tool response**, truncated to 2000 characters — i.e. file contents that were read, and command output. |
+| `PostToolUse` | The **serialized tool response**, truncated to 2000 characters — i.e. file contents that were read, and command output. Since 1.3.0 it also repeats the same current-hop content `PreToolUse` sent (the command, pattern or tool input), so that one hop's request and result can be read together. |
 | every evaluation | The current turn's user prompt, again, as one `conversation` message. |
 
 Alongside the content, each request carries identity and resource metadata:

@@ -112,13 +112,14 @@ function serializeToolResponse(toolResponse) {
     const raw = typeof toolResponse === 'string' ? toolResponse : JSON.stringify(toolResponse);
     return raw.length > MAX_TOOL_RESPONSE_LENGTH ? `${raw.slice(0, MAX_TOOL_RESPONSE_LENGTH)}…` : raw;
 }
-// PostToolUse: the tool has already returned, so transmission carries that
-// result (role "tool") instead of the user prompt. context no longer
-// carries a `prompt` field at all — that's now RTG-managed, not client-set.
-function buildToolResponseTransmission(toolResponse, nonblankFallback) {
-    const content = serializeToolResponse(toolResponse);
-    const transmission = buildTransmission(content, 'tool', nonblankFallback);
-    transmission.contentType =
-        content && typeof toolResponse !== 'string' && toolResponse != null ? 'application/json' : 'text/plain';
+// PostToolUse: userQuery is the same current-hop prompt PreToolUse sent
+// (command, pattern, serialized tool input, or tool name). The tool result
+// goes in transmission.response, not userQuery — the RTG derives its managed
+// prompt from userQuery. Role is "tool" because the tool has already returned.
+// contentType stays text/plain, matching PreToolUse: response is always a
+// string, JSON results included (see serializeToolResponse).
+function buildToolResponseTransmission(toolResponse, userQuery) {
+    const transmission = buildTransmission(userQuery, 'tool');
+    transmission.response = serializeToolResponse(toolResponse);
     return transmission;
 }

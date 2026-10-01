@@ -37,7 +37,8 @@ export interface PreToolUseInput {
 
 export interface PostToolUseInput extends PreToolUseInput {
   // Structured tool result (shape depends on the tool). Present after a
-  // successful run; this is what PostToolUse puts in transmission.userQuery.
+  // successful run; PostToolUse puts this in transmission.response.
+  // transmission.userQuery stays the same current-hop prompt PreToolUse sent.
   tool_response?: unknown;
   tool_use_id?: string;
   duration_ms?: number;
@@ -105,6 +106,10 @@ export interface DirectEvalTransmission {
   userQuery: string;
   role: 'user' | 'assistant' | 'tool';
   contentType: string;
+  // PostToolUse only: serialized tool result. Absent on prompt and PreToolUse,
+  // where there is no tool result yet. userQuery on that same transmission is
+  // the current-hop prompt PreToolUse already sent.
+  response?: string;
 }
 
 // Metadata-only sessions are explicitly supported by RTG Edge. The plugin
