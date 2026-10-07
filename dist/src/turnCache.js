@@ -33,6 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.cleanSubmittedPrompt = cleanSubmittedPrompt;
 exports.truncatePrompt = truncatePrompt;
 exports.startTurn = startTurn;
 exports.loadTurn = loadTurn;
@@ -43,7 +44,10 @@ exports.resolveTurnTraceId = resolveTurnTraceId;
 const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
 const trace_1 = require("./trace");
-const MAX_PROMPT_LENGTH = 2000;
+// Sent as the invokeAgent userQuery and again as context.conversation on every
+// tool call in the turn. An RTG 413 fails open for that request, so raise this
+// only after confirming the RTG accepts the resulting request size.
+const MAX_PROMPT_LENGTH = 10000;
 // No fallback: only ever writes inside CLAUDE_PLUGIN_DATA (Claude Code's
 // own per-plugin data directory — the officially documented mechanism for
 // exactly this). Without it, there is nothing honest to write to.
@@ -56,6 +60,35 @@ function cacheFile(sessionId, pluginDataDir) {
         return undefined;
     const safe = sessionId.replace(/[^a-zA-Z0-9_-]/g, '_');
     return path.join(dir, `${safe}.json`);
+}
+// The prompt the hook receives is not only what the user typed. The Claude
+// desktop app also writes into it:
+//   - <pasted_content id="…">…</pasted_content id="…"> around text the user
+//     pasted (the closing tag carries the id too). The pasted text is part of
+//     what the user submitted, so it stays; only the wrapper tags go.
+//   - <system-reminder>…</system-reminder> notes of its own, e.g. the "No
+//     folder" note on a session's first message. They are instructions to the
+//     model, not the user's words, and they come first — left in, they use
+//     up the length cut ahead of the user's actual prompt. So they go.
+// A reminder INSIDE a paste is something the user pasted, so it stays: one
+// left-to-right pass consumes each paste block whole before the reminder
+// pattern can see inside it. An unclosed reminder runs to the next paste or
+// the end, never into a paste.
+const PASTE_OPEN = String.raw `<pasted_content(?:\s+id="[^"]*")?\s*>`;
+const PASTE_CLOSE = String.raw `<\/pasted_content(?:\s+id="[^"]*")?\s*>`;
+const PROMPT_WRAPPERS = new RegExp(`${PASTE_OPEN}([\\s\\S]*?)${PASTE_CLOSE}` +
+    String.raw `|<system-reminder>[\s\S]*?(?:<\/system-reminder>|(?=<pasted_content[\s>])|$)`, 'g');
+// Leftover paste tag with no partner (a truncated or malformed paste).
+const STRAY_PASTE_TAG = new RegExp(`${PASTE_OPEN}|${PASTE_CLOSE}`, 'g');
+function cleanSubmittedPrompt(prompt) {
+    const cleaned = prompt
+        .replace(PROMPT_WRAPPERS, (_match, pasted) => pasted ?? '')
+        .replace(STRAY_PASTE_TAG, '')
+        .trim();
+    // A message that is nothing but reminders would become blank, and the
+    // direct endpoint rejects a blank current prompt (fail-closed deny), so keep
+    // the original rather than invent content.
+    return cleaned || prompt;
 }
 function truncatePrompt(prompt) {
     return prompt.length > MAX_PROMPT_LENGTH ? `${prompt.slice(0, MAX_PROMPT_LENGTH)}…` : prompt;

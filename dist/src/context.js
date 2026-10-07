@@ -105,7 +105,10 @@ function buildTransmission(content, role, nonblankFallback) {
     }
     return { promptKey: 'userQuery', userQuery, role, contentType: 'text/plain' };
 }
-const MAX_TOOL_RESPONSE_LENGTH = 2000;
+// Sent once, as transmission.response on that tool call's PostToolUse request.
+// An RTG 413 fails open for that request, so raise this only after confirming
+// the RTG accepts the resulting request size.
+const MAX_TOOL_RESPONSE_LENGTH = 10000;
 function serializeToolResponse(toolResponse) {
     if (toolResponse == null)
         return '';

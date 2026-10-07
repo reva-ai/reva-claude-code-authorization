@@ -90,6 +90,13 @@ entry in `.mcp.json` has no base URL, and the plugin will not invent one. Their 
 `args` and `env` are never read, which is also why credentials in a stdio server's `env`
 block never leave your machine.
 
+Since 1.4.0 this also decides enforcement, not just registration. A tool call on a server
+with no known URL is **not evaluated** — no request reaches Reva and Claude Code's own
+permission system decides. If you expected a policy to apply to an MCP tool and nothing
+appears in the decision log, check that the server has a URL the plugin can see; run with
+`REVA_DEBUG=1` and look for `skipping — MCP server "…" has no known URL`. A newly added
+remote server also goes unevaluated until the next discovery pass caches it.
+
 ## Known limitations
 
 - Raw model completions and MCP tool-**listing** calls are not gated — only actual tool

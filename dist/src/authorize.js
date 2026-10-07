@@ -57,6 +57,16 @@ async function main() {
     const activeSessionCount = (0, activeSessions_1.getActiveSessionCount)(cfg.agentId, pluginDataDir);
     const agentCtx = (0, identity_1.resolveAgentContext)(cfg.agentId, input);
     const mapping = (0, mapping_1.mapToolToCedar)(input.tool_name, input.tool_input || {}, input.cwd);
+    // An MCP tool call on a server with no known url — see mapping.ts's
+    // skipReason. True pass-through, same contract as skipOutsideCodeScope()
+    // above: no stdout at all, never an explicit permissionDecision:"allow",
+    // so Claude's own permission system still decides. Also means
+    // ingest-on-invoke below never fires for one of these — correct, since
+    // there is nothing to ingest it as.
+    if (mapping.skipReason) {
+        (0, debug_1.debugLog)(`authorize: skipping — ${mapping.skipReason}`);
+        return;
+    }
     // Ingest-on-invoke — an MCP server being used but not yet ingested gets a
     // discovery pass triggered now instead of at the next recheck. Wrapped in
     // its own try/catch on purpose: main()'s catch below fails CLOSED, so an

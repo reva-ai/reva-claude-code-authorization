@@ -162,6 +162,63 @@ test('MCP tool maps to invokeTool/Tool with an MCPServer parent', () => {
   assert.ok(m.resourceProperties?.description);
 });
 
+// --- skipReason: an MCP server with no known url is never evaluated -------
+// (see types.ts's own comment on skipReason and ingestionClient.ts, which
+// never ingests one of these in the first place).
+
+test('an MCP server never resolved to a url (no identity cache at all) gets skipReason set', () => {
+  withPluginDataDir(undefined, () => {
+    const m = mapToolToCedar('mcp__github__search_repositories', {}, '/repo');
+    assert.match(String(m.skipReason), /github/);
+    assert.match(String(m.skipReason), /no known URL/);
+  });
+});
+
+test('an app-provided server (claude-browser) always gets skipReason — it is never in any config file to carry a url', () => {
+  withPluginDataDir(undefined, () => {
+    const m = mapToolToCedar('mcp__Claude_Browser__computer', {}, '/repo');
+    assert.ok(m.skipReason);
+  });
+});
+
+test('an MCP server resolved to a real url (via the identity cache) has no skipReason', () => {
+  withIdentityCache(
+    { 'my-http-server': { slug: 'my-http-server', displayName: 'My HTTP Server', url: 'https://my-http-server.example.com/mcp' } },
+    () => {
+      const m = mapToolToCedar('mcp__my-http-server__search', {}, '/repo');
+      assert.equal(m.skipReason, undefined);
+    },
+  );
+});
+
+test('a claude.ai connector resolved by uuid, with a cached url, has no skipReason', () => {
+  withIdentityCache(
+    {
+      'd521f7ee-ac86-4efe-a02a-2f155cd06858': {
+        slug: 'gmail',
+        displayName: 'Gmail',
+        url: 'https://gmailmcp.googleapis.com/mcp/v1',
+      },
+    },
+    () => {
+      const m = mapToolToCedar('mcp__d521f7ee-ac86-4efe-a02a-2f155cd06858__search_threads', {}, '/repo');
+      assert.equal(m.skipReason, undefined);
+    },
+  );
+});
+
+test('an unresolvable uuid (no cached url) gets skipReason set', () => {
+  withIdentityCache({}, () => {
+    const m = mapToolToCedar('mcp__11111111-2222-3333-4444-555555555555__do_thing', {}, '/repo');
+    assert.ok(m.skipReason);
+  });
+});
+
+test('a non-MCP tool never has skipReason, even one with no mapping at all', () => {
+  const m = mapToolToCedar('SomeFutureTool', {}, '/repo');
+  assert.equal(m.skipReason, undefined);
+});
+
 test('WebFetch maps to invokeTool generic fallback', () => {
   const m = mapToolToCedar('WebFetch', { url: 'https://example.com' }, '/repo');
   assert.equal(m.actionName, 'invokeTool');

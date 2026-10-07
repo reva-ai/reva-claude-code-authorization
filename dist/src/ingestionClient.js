@@ -459,38 +459,41 @@ async function ingestAgent(cfg, agentEntityTypeId, agentId, userEmail, pluginDat
 // The "known names" cache below still exists, but purely to skip redundant
 // POSTs for servers already ingested, not to skip discovery itself.
 //
-// Every genuinely NEW server name discovered (remote or stdio) is
-// PATCH-ADDed onto the User entity as registeredMcpServers — same
-// accumulating-Set pattern as registeredMachineIds/agents in ingestUser()
-// above — independently of whether it also gets its own MCPServer entity
-// below (that needs a baseUrl; registeredMcpServers doesn't). "The user has
-// this configured on their machine" and "Reva has a full entity for it"
-// are different facts, and a stdio-only server is still genuinely
-// configured even though it can't become its own entity. The entity side is
-// one bulk POST (postEntitiesBulk) regardless of how many servers were
-// found; the registeredMcpServers side is one single-entity PATCH per name,
-// because the bulk PATCH silently collapses a Set to a single value (see
-// this file's top comment and the note at the call site). Only a pass that
-// actually discovered something new makes any call at all.
+// ONLY a server with a known url is ingested at all, period — not PATCHed
+// onto registeredMcpServers, not POSTed as a MCPServer entity. Per explicit
+// instruction: an entry with no url (a stdio server, an app-provided one
+// like claude-desktop/claude-browser/the iOS simulator, an enabled built-in
+// capability, or a claude.ai connector only known by name) is never
+// ingested — "configured on this machine" is no longer enough on its own;
+// RTG must be able to name a real entity, with a real baseUrl, or this
+// plugin says nothing about it at all. The authorization side matches: a
+// tool call on one of these servers is never sent to RTG either (see
+// mapping.ts's skipReason and authorize.ts/authorizePost.ts). A no-url entry
+// costs nothing here either way — it's filtered out of newEntries below
+// before any network call would have been considered, so there's no need to
+// track it as "known" to avoid redundant work; it's simply never work.
 //
-// Known-tracking: a stdio/connector entry (no url) is marked known once its
-// registeredMcpServers PATCH is CONFIRMED settled — succeeded, or was never
-// attempted at all because the caller passed no userEntityTypeId/userEmail
-// (see below) — never on an unconfirmed or failed attempt. This used to be
-// unconditional (marked known regardless of the PATCH's outcome), on the
-// reasoning that the PATCH was best-effort and separate from what "known"
-// tracks. Confirmed live that was wrong in practice: a single failed bulk
-// PATCH permanently hid real gaps, since the entry was marked known anyway
-// and never retried — connectors observed stuck exactly this way,
-// silently absent from the User entity forever. A remote entry follows the same principle and always did: known
-// only if the MCPServer POST succeeds. The one real difference bulk
-// introduces on that side: since the POST is one atomic call for every
-// remote entry in this pass rather than one call per entry, a single
-// failure (or a transient blip) holds back known-marking for the whole
-// batch, not just the one entry that would have actually failed — an
-// inherent consequence of the bulk endpoint's own atomicity (confirmed via
-// the service's own source — see this file's top comment), not a choice made
-// here.
+// The entity side is one bulk POST (postEntitiesBulk) regardless of how
+// many servers were found; the registeredMcpServers side is one
+// single-entity PATCH per name, because the bulk PATCH silently collapses a
+// Set to a single value (see this file's top comment and the note at the
+// call site). Only a pass that actually discovered something new (with a
+// url) makes any call at all.
+//
+// Known-tracking: a name is marked known only once BOTH halves are
+// CONFIRMED settled — the registeredMcpServers PATCH (succeeded, or was
+// never attempted because the caller passed no userEntityTypeId/userEmail)
+// AND the MCPServer entity POST succeeded — never on an unconfirmed or
+// failed attempt. Confirmed live that marking known on a weaker signal was
+// wrong in practice: a single failed bulk PATCH or POST permanently hid real
+// gaps, since the entry was marked known anyway and never retried —
+// connectors observed stuck exactly this way, silently absent from the User
+// entity forever. Since the POST is one atomic call for every entry in this
+// pass rather than one call per entry, a single failure (or a transient
+// blip) holds back known-marking for the whole batch, not just the one
+// entry that would have actually failed — an inherent consequence of the
+// bulk endpoint's own atomicity (confirmed via the service's own source —
+// see this file's top comment), not a choice made here.
 //
 // userEntityTypeId/userEmail are optional so a caller that only has
 // mcpServerEntityTypeId resolved can still ingest MCPServer entities
@@ -498,7 +501,7 @@ async function ingestAgent(cfg, agentEntityTypeId, agentId, userEmail, pluginDat
 async function ingestDiscoveredMcpServers(cfg, mcpServerEntityTypeId, cwd, pluginDataDir, userEntityTypeId, userEmail, discover = mcpDiscovery_1.discoverMcpServers) {
     const cached = loadIngestionCache(pluginDataDir);
     const known = new Set(cached?.knownMcpServerNames || []);
-    const newEntries = discover(cwd).filter((entry) => !known.has(entry.name));
+    const newEntries = discover(cwd).filter((entry) => entry.url && !known.has(entry.name));
     if (newEntries.length === 0)
         return;
     // Whether registeredMcpServers is settled for this pass: true if there
@@ -556,13 +559,12 @@ async function ingestDiscoveredMcpServers(cfg, mcpServerEntityTypeId, cwd, plugi
     // passed no userEntityTypeId/userEmail) there is genuinely nothing to
     // confirm, which is a deliberate "nothing to do", not a failure.
     const userSideSettled = (name) => !userPatchAttempted || patchedOk.has(name);
-    for (const entry of newEntries) {
-        // stdio/connector — nothing else to ingest, stop re-checking it, but
-        // only once its own User-side PATCH actually succeeded.
-        if (!entry.url && userSideSettled(entry.name))
-            known.add(entry.name);
-    }
-    const remoteEntries = newEntries.filter((entry) => entry.url);
+    // Every entry in newEntries already has a url (filtered above), so all of
+    // them are remote entries now — kept as its own name/variable because the
+    // bulk POST below and its own known-marking are specifically about the
+    // MCPServer-entity half of ingestion, not the registeredMcpServers half
+    // just above.
+    const remoteEntries = newEntries;
     if (remoteEntries.length > 0) {
         try {
             await withEntityTypeRetry(cfg, pluginDataDir, mcpServerEntityTypeId, 'mcpServerEntityTypeId', (id) => postEntitiesBulk(cfg, id, remoteEntries.map((entry) => ({

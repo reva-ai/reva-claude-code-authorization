@@ -233,9 +233,10 @@ const CONTEXT_KEYS = [
     strict_1.default.equal(tx.userQuery, 'Read');
     strict_1.default.equal(tx.response, '');
 });
-(0, node_test_1.test)('serializeToolResponse truncates very long responses', () => {
-    const long = 'x'.repeat(3000);
-    const serialized = (0, context_1.serializeToolResponse)(long);
-    strict_1.default.ok(serialized.length < long.length);
-    strict_1.default.ok(serialized.endsWith('…'));
+(0, node_test_1.test)('serializeToolResponse keeps a response of up to 10000 characters whole', () => {
+    const response = 'x'.repeat(10000);
+    strict_1.default.equal((0, context_1.serializeToolResponse)(response), response);
+});
+(0, node_test_1.test)('serializeToolResponse cuts a longer response to 10000 characters plus an ellipsis', () => {
+    strict_1.default.equal((0, context_1.serializeToolResponse)('x'.repeat(10001)), `${'x'.repeat(10000)}…`);
 });

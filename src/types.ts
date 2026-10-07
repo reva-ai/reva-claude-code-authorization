@@ -186,6 +186,14 @@ export interface CedarActionMapping {
   // NotebookEdit) — keeps audit fidelity without needing a separate action
   // per tool variant.
   tool?: string;
+  // Set only for an mcp__<server>__<tool> call whose server has no known
+  // URL (never ingested — see ingestionClient.ts: only a server with a URL
+  // ever becomes a MCPServer entity or a registeredMcpServers name). When
+  // set, authorize.ts/authorizePost.ts treat the call as out of governance
+  // scope entirely — true pass-through, no RTG call, same contract as
+  // skipOutsideCodeScope() — rather than send a Cedar request RTG has no
+  // entity to evaluate it against.
+  skipReason?: string;
 }
 
 export interface SessionContext {

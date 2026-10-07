@@ -52,6 +52,13 @@ async function main() {
     const currentSession = (0, activeSessions_1.getSessionEntry)(cfg.agentId, input.session_id, pluginDataDir);
     const agentCtx = (0, identity_1.resolveAgentContext)(cfg.agentId, input);
     const mapping = (0, mapping_1.mapToolToCedar)(input.tool_name, input.tool_input || {}, input.cwd);
+    // See the matching check in authorize.ts: an MCP tool call on a server
+    // with no known url is out of governance scope entirely, true
+    // pass-through, no RTG call.
+    if (mapping.skipReason) {
+        (0, debug_1.debugLog)(`authorizePost: skipping — ${mapping.skipReason}`);
+        return;
+    }
     const turn = (0, turnCache_1.loadOrStartTurn)(input.session_id, pluginDataDir);
     // trace = this turn (shared by every call the prompt fans out into),
     // span = this tool call. The span key is tool_name + tool_input, which

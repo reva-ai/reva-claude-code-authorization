@@ -5,6 +5,36 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] — 2026-10-07
+
+### Changed
+
+- **An MCP tool call is now evaluated only when the plugin knows a URL for its server.**
+  A server with no URL — stdio, app-provided (`claude-desktop`, `claude-browser`, the iOS
+  simulator), an enabled built-in capability, or one not yet discovered — is neither
+  ingested nor evaluated, and its tool calls pass straight through to Claude Code's own
+  permission system. This narrows what the plugin governs: those calls previously reached
+  the RTG, where an unresolvable entity denied them. **No policy applies to them now.**
+  Documented in the README, `SECURITY.md`'s decision table and `docs/TROUBLESHOOTING.md`,
+  including how to spot it (`REVA_DEBUG=1`, `skipping — MCP server "…" has no known URL`).
+- A server with no URL is no longer added to `registeredMcpServers` either, where a stdio
+  server's name previously was — so slightly less leaves the machine.
+- The identity cache is now also slug-keyed, not only uuid-keyed, so a remote server
+  configured by name in `.mcp.json` or `~/.claude.json` can resolve its URL at invoke time
+  rather than only a claude.ai connector by uuid.
+- **Prompt handling.** The cap on the transmitted prompt rises from 2000 to 10000
+  characters, and the desktop app's own `<system-reminder>` blocks are stripped before the
+  prompt is cached or transmitted — they are instructions to the model, not the developer's
+  words, and arriving first they consumed the length budget ahead of the real prompt.
+  Pasted text is kept; only the `<pasted_content>` wrapper tags are removed.
+
+### Fixed
+
+- Re-applied against this development drop, which still branches from before `1.0.0`: the
+  `host` install-dialog option and its tests, `package.json`'s release metadata and
+  `package` script, `scripts/check-no-real-identifiers.mjs`, and the `surfaceIsolation`
+  assertion that fails unless `debug.log` is the only thing Cowork writes.
+
 ## [1.3.0] — 2026-10-01
 
 ### Changed
@@ -168,6 +198,7 @@ First public release.
 - `src/config.ts` referred to a README "Testing" section that did not exist; it now points
   at `CONTRIBUTING.md`.
 
+[1.4.0]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.4.0
 [1.3.0]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.3.0
 [1.2.1]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.2.1
 [1.2.0]: https://github.com/reva-ai/reva-claude-code-authorization/releases/tag/v1.2.0

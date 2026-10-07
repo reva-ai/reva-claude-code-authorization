@@ -64,9 +64,16 @@ from "run an arbitrary shell command" rather than lumping everything under one p
 | Writes a file | `write` |
 | Edits a file | `edit` |
 | Searches a directory | `glob` / `grep` |
-| Calls an external/MCP tool | `invokeTool` |
+| Calls an MCP tool on a server with a known URL | `invokeTool` |
 | Spawns a sub-agent | `spawn` |
 | Starts a new turn | `invokeAgent` |
+
+Since 1.4.0 an MCP tool call is only evaluated when the plugin knows a **URL** for that
+server. A server with no URL — a stdio server, one the app provides (`claude-desktop`,
+`claude-browser`, the iOS simulator), an enabled built-in capability, or one not yet
+discovered — is neither registered with Reva nor evaluated: those calls pass straight
+through to Claude Code's own permission system, and **no policy of yours applies to them**.
+Treat the MCP servers you want governed as the ones you can name a URL for.
 
 Resources are identified by a **repository-relative** path — `my-repo/src/index.ts` — so a
 policy written once ("only allow this inside `my-repo/src/**`") works on every developer's

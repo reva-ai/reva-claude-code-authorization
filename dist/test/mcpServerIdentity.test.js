@@ -170,6 +170,37 @@ function writeDesktopSession(sessionsDir, connectors, file = 'local_desktop-sess
         strict_1.default.equal((0, mcpServerIdentity_1.resolveMcpServerIdentity)('plugin_context7_context7', pluginDataDir).slug, 'plugin-context7-context7');
     });
 });
+(0, node_test_1.test)('refreshMcpServerIdentityCache merges discovered (non-uuid) servers by slug, and resolveMcpServerIdentity picks up their url', async () => {
+    await withTempDir(async (dir) => {
+        const pluginDataDir = path.join(dir, 'plugin-data');
+        (0, mcpServerIdentity_1.refreshMcpServerIdentityCache)(pluginDataDir, [
+            { name: 'my-http-server', url: 'https://my-http-server.example.com/mcp', displayName: 'My HTTP Server' },
+        ]);
+        const identity = (0, mcpServerIdentity_1.resolveMcpServerIdentity)('my-http-server', pluginDataDir);
+        strict_1.default.equal(identity.slug, 'my-http-server');
+        strict_1.default.equal(identity.url, 'https://my-http-server.example.com/mcp');
+        strict_1.default.equal(identity.displayName, 'My HTTP Server');
+    });
+});
+(0, node_test_1.test)('a discovered server with no url is still cached, so resolution is definitive rather than ambiguous', async () => {
+    await withTempDir(async (dir) => {
+        const pluginDataDir = path.join(dir, 'plugin-data');
+        (0, mcpServerIdentity_1.refreshMcpServerIdentityCache)(pluginDataDir, [{ name: 'my-stdio-server', url: undefined }]);
+        const identity = (0, mcpServerIdentity_1.resolveMcpServerIdentity)('my-stdio-server', pluginDataDir);
+        strict_1.default.equal(identity.slug, 'my-stdio-server');
+        strict_1.default.equal(identity.url, undefined);
+    });
+});
+(0, node_test_1.test)('an app-provided server never discovered by any file source still falls back to {slug}, no url', async () => {
+    await withTempDir(async (dir) => {
+        const pluginDataDir = path.join(dir, 'plugin-data');
+        // Nothing discovers claude-browser — it's never in a config file — so
+        // the identity cache has no entry for it either way.
+        (0, mcpServerIdentity_1.refreshMcpServerIdentityCache)(pluginDataDir, []);
+        const identity = (0, mcpServerIdentity_1.resolveMcpServerIdentity)('Claude_Browser', pluginDataDir);
+        strict_1.default.deepEqual(identity, { slug: 'claude-browser' });
+    });
+});
 (0, node_test_1.test)('slugging is many-to-one, and that collapse is symmetric', async () => {
     await withTempDir(async (dir) => {
         const pluginDataDir = path.join(dir, 'plugin-data');

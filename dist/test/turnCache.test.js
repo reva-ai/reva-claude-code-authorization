@@ -115,11 +115,13 @@ function withTempDir(fn) {
         ]);
     });
 });
-(0, node_test_1.test)('truncatePrompt caps very long prompts', () => {
-    const long = 'x'.repeat(3000);
-    const truncated = (0, turnCache_1.truncatePrompt)(long);
-    strict_1.default.ok(truncated.length < long.length);
-    strict_1.default.ok(truncated.endsWith('…'));
+(0, node_test_1.test)('truncatePrompt keeps a prompt of up to 10000 characters whole', () => {
+    const prompt = 'x'.repeat(10000);
+    strict_1.default.equal((0, turnCache_1.truncatePrompt)(prompt), prompt);
+});
+(0, node_test_1.test)('truncatePrompt cuts a longer prompt to 10000 characters plus an ellipsis', () => {
+    const truncated = (0, turnCache_1.truncatePrompt)('x'.repeat(10001));
+    strict_1.default.equal(truncated, `${'x'.repeat(10000)}…`);
 });
 (0, node_test_1.test)('truncatePrompt leaves short prompts untouched', () => {
     strict_1.default.equal((0, turnCache_1.truncatePrompt)('short prompt'), 'short prompt');
@@ -171,4 +173,43 @@ function withTempDir(fn) {
         strict_1.default.equal(next.startedAt, '2026-09-20T09:00:00.000Z');
         strict_1.default.ok(!('spanId' in next));
     });
+});
+(0, node_test_1.test)('cleanSubmittedPrompt removes the paste tags and keeps the pasted text', () => {
+    const prompt = 'I also saw this\n\n<pasted_content id="43b7">\ntofu init failed\n</pasted_content id="43b7">\n\ncan you check';
+    strict_1.default.equal((0, turnCache_1.cleanSubmittedPrompt)(prompt), 'I also saw this\n\n\ntofu init failed\n\n\ncan you check');
+});
+(0, node_test_1.test)('cleanSubmittedPrompt handles several pastes and paste tags without an id', () => {
+    const prompt = '<pasted_content id="a1">one</pasted_content id="a1"> and <pasted_content>two</pasted_content>';
+    strict_1.default.equal((0, turnCache_1.cleanSubmittedPrompt)(prompt), 'one and two');
+});
+(0, node_test_1.test)('cleanSubmittedPrompt removes a reminder the host wrote ahead of the user prompt', () => {
+    const prompt = '<system-reminder>\nThe user started this session without choosing a project folder…\n</system-reminder>\nfix the login bug';
+    strict_1.default.equal((0, turnCache_1.cleanSubmittedPrompt)(prompt), 'fix the login bug');
+});
+(0, node_test_1.test)('cleanSubmittedPrompt removes reminders anywhere outside a paste', () => {
+    const prompt = 'fix the login bug\n<system-reminder>one</system-reminder>\nand the logout bug<system-reminder>two</system-reminder>';
+    strict_1.default.equal((0, turnCache_1.cleanSubmittedPrompt)(prompt), 'fix the login bug\n\nand the logout bug');
+});
+(0, node_test_1.test)('cleanSubmittedPrompt keeps a reminder the user pasted', () => {
+    const prompt = 'why is this sent?\n<pasted_content id="b78a">\n<system-reminder>note</system-reminder>\n</pasted_content id="b78a">';
+    strict_1.default.equal((0, turnCache_1.cleanSubmittedPrompt)(prompt), 'why is this sent?\n\n<system-reminder>note</system-reminder>');
+});
+(0, node_test_1.test)('cleanSubmittedPrompt stops an unclosed reminder at the next paste', () => {
+    strict_1.default.equal((0, turnCache_1.cleanSubmittedPrompt)('look <system-reminder>cut off'), 'look');
+    strict_1.default.equal((0, turnCache_1.cleanSubmittedPrompt)('<system-reminder>cut off <pasted_content id="c1">kept</pasted_content id="c1">'), 'kept');
+});
+(0, node_test_1.test)('cleanSubmittedPrompt removes a stray paste tag with no partner', () => {
+    strict_1.default.equal((0, turnCache_1.cleanSubmittedPrompt)('see <pasted_content id="d1">half a paste'), 'see half a paste');
+});
+(0, node_test_1.test)('cleanSubmittedPrompt keeps the original when the message is only a reminder', () => {
+    const prompt = '<system-reminder>host note only</system-reminder>';
+    strict_1.default.equal((0, turnCache_1.cleanSubmittedPrompt)(prompt), prompt);
+});
+(0, node_test_1.test)('cleanSubmittedPrompt returns an ordinary prompt unchanged', () => {
+    const prompt = 'fix the <div> layout in app.tsx';
+    strict_1.default.equal((0, turnCache_1.cleanSubmittedPrompt)(prompt), prompt);
+});
+(0, node_test_1.test)('a long host reminder no longer pushes the user prompt past the cut', () => {
+    const prompt = `<system-reminder>${'x'.repeat(12000)}</system-reminder>\nfix the login bug`;
+    strict_1.default.equal((0, turnCache_1.truncatePrompt)((0, turnCache_1.cleanSubmittedPrompt)(prompt)), 'fix the login bug');
 });

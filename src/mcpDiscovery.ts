@@ -69,9 +69,11 @@ export interface DiscoveredMcpServer {
   name: string;
   // Present for a remote/http server; absent for stdio/local-only, an
   // enabled built-in capability, or any malformed entry — never fabricated.
-  // Each of those is still genuinely "configured for this user" even with no
-  // url to report (see callers). claude.ai connectors DO have one now, via
-  // source 6.
+  // claude.ai connectors DO have one, via source 6. An entry with no url is
+  // never ingested at all (see ingestionClient.ts) and its tool calls are
+  // never sent to RTG (see mapping.ts's skipReason) — "configured for this
+  // user" is tracked here for completeness, but is no longer enough on its
+  // own to be governed.
   url?: string;
   // The name as it was actually written wherever it was found, before
   // slugging — kept so the entity stays readable in Reva.

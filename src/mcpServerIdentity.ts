@@ -191,12 +191,36 @@ export function loadMcpServerIdentityCache(pluginDataDir?: string): Record<strin
   }
 }
 
-// Rebuilds the uuid -> identity map the PreToolUse path reads. MERGED into
-// whatever is already cached rather than replacing it: a connector that has
-// been disconnected, or whose session file has aged out of the newest-N
-// window, should keep resolving to its real name rather than silently
-// reverting to a raw uuid in the audit trail.
-export function refreshMcpServerIdentityCache(pluginDataDir?: string): Record<string, McpServerIdentity> {
+// A DiscoveredMcpServer, minimally — not importing the real type from
+// mcpDiscovery.ts (a value import would be circular: that module already
+// imports slugifyMcpServerName/readDesktopConnectors from this one). The
+// caller (ingestMcpServers.ts) already has the real discoverMcpServers()
+// result in hand and passes it straight through; this just needs its shape.
+interface DiscoveredServerLike {
+  name: string;
+  url?: string;
+  displayName?: string;
+}
+
+// Rebuilds the identity map the PreToolUse path reads — uuid-keyed for a
+// claude.ai connector, slug-keyed for everything file-based discovery finds
+// (.mcp.json, ~/.claude.json, …). MERGED into whatever is already cached
+// rather than replacing it: a connector that has been disconnected, or whose
+// session file has aged out of the newest-N window, should keep resolving to
+// its real name rather than silently reverting to a raw uuid in the audit
+// trail.
+//
+// The slug-keyed half is what lets resolveMcpServerIdentity's non-uuid path
+// (below) answer "does this server have a url" for a real remote server
+// configured by name, not just a claude.ai connector by uuid — needed so
+// mapping.ts can tell a governed remote server apart from one with no url at
+// all (an app-provided server, a built-in capability, a stdio one), which is
+// never ingested and whose tool calls are never evaluated (see
+// ingestionClient.ts and mapping.ts's skipReason).
+export function refreshMcpServerIdentityCache(
+  pluginDataDir?: string,
+  discoveredServers: DiscoveredServerLike[] = [],
+): Record<string, McpServerIdentity> {
   const merged = loadMcpServerIdentityCache(pluginDataDir);
   for (const connector of readDesktopConnectors()) {
     // Keyed lowercase so a lookup can normalize to match — see
@@ -207,6 +231,12 @@ export function refreshMcpServerIdentityCache(pluginDataDir?: string): Record<st
       url: connector.url,
       uuid: connector.uuid,
     };
+  }
+  for (const entry of discoveredServers) {
+    // entry.name is already the canonical slug — discoverMcpServers applies
+    // the same slugifyMcpServerName this module exports, so this key is by
+    // construction the same one resolveMcpServerIdentity computes below.
+    merged[entry.name] = { slug: entry.name, displayName: entry.displayName, url: entry.url };
   }
   const file = identityCachePath(pluginDataDir);
   if (file && pluginDataDir) {
@@ -223,14 +253,17 @@ export function refreshMcpServerIdentityCache(pluginDataDir?: string): Record<st
 
 // Invoke-time resolution of the server token in an mcp__<server>__<tool>
 // name. A uuid is looked up in the cache written by the detached ingestion
-// child; anything else is slugified directly.
+// child; anything else is slugified directly, then ALSO looked up in that
+// same cache under its slug — the only way a real url reaches this side for
+// a non-uuid server (mapping.ts never reads .mcp.json/~/.claude.json itself).
 //
 // On a cache MISS the raw token is returned unchanged — deliberately never a
-// fabricated slug. A uuid carries no name, so there is nothing honest to
-// derive from it, and emitting a guessed id into an audit trail is worse
-// than emitting an opaque-but-true one. The miss is self-healing: the next
-// discovery pass caches that uuid, and ingest-on-invoke triggers one
-// immediately (see authorize.ts), so it converges within one pass.
+// fabricated slug or url. A uuid carries no name, so there is nothing honest
+// to derive from it, and emitting a guessed id into an audit trail is worse
+// than emitting an opaque-but-true one. A miss on either side is
+// self-healing: the next discovery pass caches that uuid or slug, and
+// ingest-on-invoke triggers one immediately for an unresolved uuid (see
+// authorize.ts), so it converges within one pass.
 export function resolveMcpServerIdentity(token: string, pluginDataDir?: string): McpServerIdentity {
   if (!isMcpServerUuid(token)) {
     // Slugged, like everything else. ONE id format across every source and
@@ -247,7 +280,10 @@ export function resolveMcpServerIdentity(token: string, pluginDataDir?: string):
     // entity. That is a real loss, but it is symmetric (enforcement collapses
     // them the same way, so nothing is orphaned) and it buys an id format
     // that is predictable everywhere.
-    return { slug: slugifyMcpServerName(token) || token };
+    const slug = slugifyMcpServerName(token) || token;
+    const cached = loadMcpServerIdentityCache(pluginDataDir)[slug];
+    if (cached && typeof cached.slug === 'string' && cached.slug.length > 0) return cached;
+    return { slug };
   }
   // isMcpServerUuid accepts either case, so normalize before both the lookup
   // and the fallback. Without this an uppercase spelling misses the

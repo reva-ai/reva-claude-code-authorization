@@ -264,9 +264,11 @@ test('serializeToolResponse treats null/undefined as empty string', () => {
   assert.equal(tx.response, '');
 });
 
-test('serializeToolResponse truncates very long responses', () => {
-  const long = 'x'.repeat(3000);
-  const serialized = serializeToolResponse(long);
-  assert.ok(serialized.length < long.length);
-  assert.ok(serialized.endsWith('…'));
+test('serializeToolResponse keeps a response of up to 10000 characters whole', () => {
+  const response = 'x'.repeat(10000);
+  assert.equal(serializeToolResponse(response), response);
+});
+
+test('serializeToolResponse cuts a longer response to 10000 characters plus an ellipsis', () => {
+  assert.equal(serializeToolResponse('x'.repeat(10001)), `${'x'.repeat(10000)}…`);
 });

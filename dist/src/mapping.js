@@ -303,6 +303,13 @@ function mapToolToCedar(toolName, toolInput, cwd) {
             // doesn't give us a real description, so this is synthesized.
             resourceProperties: { name: tool, description: `MCP tool "${tool}" on server "${label}"`, connectionType: 'mcp' },
             resourceParents: [{ type: 'MCPServer', id: server.slug }],
+            // No known url for this server — it was never ingested (see
+            // ingestionClient.ts) and RTG has no MCPServer entity to evaluate this
+            // call against. Covers an app-provided server (claude-desktop,
+            // claude-browser, the iOS simulator), a built-in capability, a plain
+            // stdio server, or one simply not yet discovered. See skipReason's own
+            // comment in types.ts for what the caller does with this.
+            ...(server.url ? {} : { skipReason: `MCP server "${label}" has no known URL — not evaluated` }),
         };
     }
     // WebFetch, WebSearch, and any other/unrecognized built-in tool — safe

@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { test } from 'node:test';
 import {
+  cleanSubmittedPrompt,
   conversationFromTurn,
   directSessionFromTurn,
   loadOrStartTurn,
@@ -92,11 +93,14 @@ test('direct session is metadata-only and conversation uses the observed prompt 
   });
 });
 
-test('truncatePrompt caps very long prompts', () => {
-  const long = 'x'.repeat(3000);
-  const truncated = truncatePrompt(long);
-  assert.ok(truncated.length < long.length);
-  assert.ok(truncated.endsWith('…'));
+test('truncatePrompt keeps a prompt of up to 10000 characters whole', () => {
+  const prompt = 'x'.repeat(10000);
+  assert.equal(truncatePrompt(prompt), prompt);
+});
+
+test('truncatePrompt cuts a longer prompt to 10000 characters plus an ellipsis', () => {
+  const truncated = truncatePrompt('x'.repeat(10001));
+  assert.equal(truncated, `${'x'.repeat(10000)}…`);
 });
 
 test('truncatePrompt leaves short prompts untouched', () => {
@@ -161,4 +165,56 @@ test('an upgrade from a pre-traceId cache entry keeps the turn and derives a sha
     assert.equal(next.startedAt, '2026-09-20T09:00:00.000Z');
     assert.ok(!('spanId' in next));
   });
+});
+
+test('cleanSubmittedPrompt removes the paste tags and keeps the pasted text', () => {
+  const prompt = 'I also saw this\n\n<pasted_content id="43b7">\ntofu init failed\n</pasted_content id="43b7">\n\ncan you check';
+  assert.equal(cleanSubmittedPrompt(prompt), 'I also saw this\n\n\ntofu init failed\n\n\ncan you check');
+});
+
+test('cleanSubmittedPrompt handles several pastes and paste tags without an id', () => {
+  const prompt = '<pasted_content id="a1">one</pasted_content id="a1"> and <pasted_content>two</pasted_content>';
+  assert.equal(cleanSubmittedPrompt(prompt), 'one and two');
+});
+
+test('cleanSubmittedPrompt removes a reminder the host wrote ahead of the user prompt', () => {
+  const prompt = '<system-reminder>\nThe user started this session without choosing a project folder…\n</system-reminder>\nfix the login bug';
+  assert.equal(cleanSubmittedPrompt(prompt), 'fix the login bug');
+});
+
+test('cleanSubmittedPrompt removes reminders anywhere outside a paste', () => {
+  const prompt = 'fix the login bug\n<system-reminder>one</system-reminder>\nand the logout bug<system-reminder>two</system-reminder>';
+  assert.equal(cleanSubmittedPrompt(prompt), 'fix the login bug\n\nand the logout bug');
+});
+
+test('cleanSubmittedPrompt keeps a reminder the user pasted', () => {
+  const prompt = 'why is this sent?\n<pasted_content id="b78a">\n<system-reminder>note</system-reminder>\n</pasted_content id="b78a">';
+  assert.equal(cleanSubmittedPrompt(prompt), 'why is this sent?\n\n<system-reminder>note</system-reminder>');
+});
+
+test('cleanSubmittedPrompt stops an unclosed reminder at the next paste', () => {
+  assert.equal(cleanSubmittedPrompt('look <system-reminder>cut off'), 'look');
+  assert.equal(
+    cleanSubmittedPrompt('<system-reminder>cut off <pasted_content id="c1">kept</pasted_content id="c1">'),
+    'kept',
+  );
+});
+
+test('cleanSubmittedPrompt removes a stray paste tag with no partner', () => {
+  assert.equal(cleanSubmittedPrompt('see <pasted_content id="d1">half a paste'), 'see half a paste');
+});
+
+test('cleanSubmittedPrompt keeps the original when the message is only a reminder', () => {
+  const prompt = '<system-reminder>host note only</system-reminder>';
+  assert.equal(cleanSubmittedPrompt(prompt), prompt);
+});
+
+test('cleanSubmittedPrompt returns an ordinary prompt unchanged', () => {
+  const prompt = 'fix the <div> layout in app.tsx';
+  assert.equal(cleanSubmittedPrompt(prompt), prompt);
+});
+
+test('a long host reminder no longer pushes the user prompt past the cut', () => {
+  const prompt = `<system-reminder>${'x'.repeat(12000)}</system-reminder>\nfix the login bug`;
+  assert.equal(truncatePrompt(cleanSubmittedPrompt(prompt)), 'fix the login bug');
 });

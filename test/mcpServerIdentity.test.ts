@@ -160,6 +160,40 @@ test('a non-uuid token is slugged, into the same format every source uses', asyn
   });
 });
 
+test('refreshMcpServerIdentityCache merges discovered (non-uuid) servers by slug, and resolveMcpServerIdentity picks up their url', async () => {
+  await withTempDir(async (dir) => {
+    const pluginDataDir = path.join(dir, 'plugin-data');
+    refreshMcpServerIdentityCache(pluginDataDir, [
+      { name: 'my-http-server', url: 'https://my-http-server.example.com/mcp', displayName: 'My HTTP Server' },
+    ]);
+    const identity = resolveMcpServerIdentity('my-http-server', pluginDataDir);
+    assert.equal(identity.slug, 'my-http-server');
+    assert.equal(identity.url, 'https://my-http-server.example.com/mcp');
+    assert.equal(identity.displayName, 'My HTTP Server');
+  });
+});
+
+test('a discovered server with no url is still cached, so resolution is definitive rather than ambiguous', async () => {
+  await withTempDir(async (dir) => {
+    const pluginDataDir = path.join(dir, 'plugin-data');
+    refreshMcpServerIdentityCache(pluginDataDir, [{ name: 'my-stdio-server', url: undefined }]);
+    const identity = resolveMcpServerIdentity('my-stdio-server', pluginDataDir);
+    assert.equal(identity.slug, 'my-stdio-server');
+    assert.equal(identity.url, undefined);
+  });
+});
+
+test('an app-provided server never discovered by any file source still falls back to {slug}, no url', async () => {
+  await withTempDir(async (dir) => {
+    const pluginDataDir = path.join(dir, 'plugin-data');
+    // Nothing discovers claude-browser — it's never in a config file — so
+    // the identity cache has no entry for it either way.
+    refreshMcpServerIdentityCache(pluginDataDir, []);
+    const identity = resolveMcpServerIdentity('Claude_Browser', pluginDataDir);
+    assert.deepEqual(identity, { slug: 'claude-browser' });
+  });
+});
+
 test('slugging is many-to-one, and that collapse is symmetric', async () => {
   await withTempDir(async (dir) => {
     const pluginDataDir = path.join(dir, 'plugin-data');

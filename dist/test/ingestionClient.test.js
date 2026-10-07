@@ -546,7 +546,7 @@ function discovering(entries) {
             agentEntityTypeId: 'stale-agent-id',
             mcpServerEntityTypeId: 'stale-mcp-id',
         }), 'utf8');
-        await withFetch((async () => new Response(JSON.stringify({ key: 'RESOURCE.NOT.FOUND', message: 'Entity type not found', data: 'stale-user-id' }), { status: 404 })), () => (0, ingestionClient_1.ingestDiscoveredMcpServers)(baseCfg, 'stale-mcp-id', dir, dir, 'stale-user-id', 'alice@example.com', discovering([{ name: 'my-local-server', url: undefined }])));
+        await withFetch((async () => new Response(JSON.stringify({ key: 'RESOURCE.NOT.FOUND', message: 'Entity type not found', data: 'stale-user-id' }), { status: 404 })), () => (0, ingestionClient_1.ingestDiscoveredMcpServers)(baseCfg, 'stale-mcp-id', dir, dir, 'stale-user-id', 'alice@example.com', discovering([{ name: 'my-remote-server', url: 'https://my-remote-server.example.com/mcp' }])));
         const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
         strict_1.default.equal(cache.userEntityTypeId, undefined);
         strict_1.default.equal(cache.agentEntityTypeId, undefined);
@@ -613,32 +613,41 @@ function discovering(entries) {
         strict_1.default.equal(cache.knownMcpServerNames.includes('flaky-server'), false);
     });
 });
-(0, node_test_1.test)('ingestDiscoveredMcpServers marks a stdio entry (no url) as known immediately — nothing to retry, no network call', async () => {
+// A no-url entry — stdio, an app-provided server like claude-desktop or
+// claude-browser, an enabled built-in capability, or a claude.ai connector
+// only known by name — is never ingested at all any more: not PATCHed onto
+// registeredMcpServers, not POSTed as a MCPServer entity, and never marked
+// known, regardless of whether the caller even supplied
+// userEntityTypeId/userEmail. It costs nothing to leave it untracked: it's
+// filtered out before any network call would have been considered, so
+// there's nothing to avoid repeating.
+(0, node_test_1.test)('ingestDiscoveredMcpServers never ingests a no-url entry — no network call, not tracked as known, even with userEntityTypeId/userEmail given', async () => {
     await withTempDir(async (dir) => {
         let fetchCalled = false;
         await withFetch((async () => {
             fetchCalled = true;
             return new Response(undefined, { status: 200 });
-        }), () => (0, ingestionClient_1.ingestDiscoveredMcpServers)(baseCfg, 'mcp-type-id', dir, dir, undefined, undefined, discovering([{ name: 'my-local-server', url: undefined }])));
+        }), () => (0, ingestionClient_1.ingestDiscoveredMcpServers)(baseCfg, 'mcp-type-id', dir, dir, 'user-type-id', 'alice@example.com', discovering([{ name: 'claude-browser', url: undefined }])));
         strict_1.default.equal(fetchCalled, false);
-        const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
-        strict_1.default.deepEqual(cache.knownMcpServerNames, ['my-local-server']);
+        // Nothing was ever attempted, so there's nothing new to persist either —
+        // the cache file is never even written on a pass like this.
+        strict_1.default.equal(fs.existsSync(path.join(dir, 'entity-types', 'catalog.json')), false);
     });
 });
-// This is the real gap confirmed live: a stdio/connector entry used to be
-// marked known unconditionally, even when the registeredMcpServers PATCH
-// was actually attempted (userEntityTypeId/userEmail given) and failed for
-// an unrelated reason (not the stale-entity-type-id signature — that has
-// its own retry path). A single failed bulk call was silently and
-// permanently hiding real servers from the real User entity. Contrast with
-// the test above: no userEntityTypeId/userEmail at all is a deliberate
-// "nothing to attempt" and stays known-immediately; this is a genuine,
-// confirmed failure and must NOT be marked known.
-(0, node_test_1.test)('ingestDiscoveredMcpServers does NOT mark a stdio/connector entry known when the registeredMcpServers PATCH was attempted and failed', async () => {
+(0, node_test_1.test)('ingestDiscoveredMcpServers ignores a no-url entry even alongside a real remote one in the same pass', async () => {
     await withTempDir(async (dir) => {
-        await withFetch((async () => new Response('server error', { status: 500 })), () => (0, ingestionClient_1.ingestDiscoveredMcpServers)(baseCfg, 'mcp-type-id', dir, dir, 'user-type-id', 'alice@example.com', discovering([{ name: 'claude.ai ElevenLabs', url: undefined }])));
+        let body;
+        await withFetch((async (_url, opts) => {
+            body = JSON.parse(opts.body);
+            return new Response(undefined, { status: 200 });
+        }), () => (0, ingestionClient_1.ingestDiscoveredMcpServers)(baseCfg, 'mcp-type-id', dir, dir, undefined, undefined, discovering([
+            { name: 'claude-desktop', url: undefined },
+            { name: 'remote-server', url: 'https://example.com/mcp' },
+        ])));
+        strict_1.default.equal(body.length, 1);
+        strict_1.default.equal(body[0].entityId, 'remote-server');
         const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
-        strict_1.default.deepEqual(cache.knownMcpServerNames, []); // not known — the next pass will retry it
+        strict_1.default.deepEqual(cache.knownMcpServerNames, ['remote-server']);
     });
 });
 (0, node_test_1.test)('ingestDiscoveredMcpServers PATCHes registeredMcpServers per name on the SINGLE endpoint, alongside a bulk MCPServer entity POST', async () => {
@@ -667,22 +676,14 @@ function discovering(entries) {
         strict_1.default.equal(posts[0].body[0].entityId, 'claude.ai Gmail');
     });
 });
-(0, node_test_1.test)('ingestDiscoveredMcpServers PATCHes registeredMcpServers for a stdio server too, even though it gets no MCPServer entity', async () => {
+(0, node_test_1.test)('ingestDiscoveredMcpServers makes no call at all for a stdio server — no registeredMcpServers PATCH, no MCPServer entity', async () => {
     await withTempDir(async (dir) => {
         const calls = [];
         await withFetch((async (_url, opts) => {
             calls.push({ method: methodOf(opts), body: opts?.body ? JSON.parse(opts.body) : undefined });
             return new Response(undefined, { status: 200 });
         }), () => (0, ingestionClient_1.ingestDiscoveredMcpServers)(baseCfg, 'mcp-type-id', dir, dir, 'user-type-id', 'alice@example.com', discovering([{ name: 'my-local-server', url: undefined }])));
-        // Exactly one call total: the registeredMcpServers PATCH — no POST,
-        // since a stdio server has no baseUrl to give it its own entity.
-        strict_1.default.equal(calls.length, 1);
-        strict_1.default.equal(calls[0].method, 'PATCH');
-        strict_1.default.deepEqual(calls[0].body, {
-            op: 'ADD',
-            path: 'ATTRIBUTE',
-            attributeValue: { name: 'registeredMcpServers', value: 'my-local-server' },
-        });
+        strict_1.default.equal(calls.length, 0);
     });
 });
 (0, node_test_1.test)('ingestDiscoveredMcpServers never PATCHes registeredMcpServers for a server already known from an earlier session', async () => {
@@ -740,9 +741,9 @@ function discovering(entries) {
             }
             return new Response(undefined, { status: 200 });
         }), () => (0, ingestionClient_1.ingestDiscoveredMcpServers)(baseCfg, 'mcp-type-id', dir, dir, 'user-type-id', 'alice@example.com', discovering([
-            { name: 'good-server', url: undefined },
-            { name: 'bad-server', url: undefined },
-            { name: 'other-server', url: undefined },
+            { name: 'good-server', url: 'https://good-server.example.com/mcp' },
+            { name: 'bad-server', url: 'https://bad-server.example.com/mcp' },
+            { name: 'other-server', url: 'https://other-server.example.com/mcp' },
         ])));
         const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
         strict_1.default.deepEqual(cache.knownMcpServerNames.sort(), ['good-server', 'other-server']);

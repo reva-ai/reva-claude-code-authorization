@@ -29,7 +29,7 @@ the complete set of content that leaves the machine.
 
 | Hook | Content transmitted |
 |---|---|
-| `UserPromptSubmit` | The **full text of the prompt** the developer submitted. |
+| `UserPromptSubmit` | The **full text of the prompt** the developer submitted, truncated to 10000 characters (2000 before 1.4.0). The desktop app's own `<system-reminder>` blocks are stripped before transmission; text the developer pasted is kept, only the `<pasted_content>` wrapper tags are removed. |
 | `PreToolUse` (Bash) | The **full shell command**, verbatim. |
 | `PreToolUse` (Glob/Grep) | The search pattern. |
 | `PreToolUse` (all other tools) | `JSON.stringify(tool_input)` — the whole tool input object. For `Write` this includes **the file content being written**; for `Edit`, the **`old_string` and `new_string`**. |
@@ -54,6 +54,11 @@ If the working directory contains a `.mcp.json`, **HTTP** MCP servers in it are 
 name and base URL. Stdio servers are **skipped entirely** — their `command`, `args` and `env`
 are never read or transmitted, so credentials held in a stdio server's `env` block do not
 leave the machine through this plugin.
+
+Since 1.4.0 a known URL is the condition for everything: a server without one is not
+registered under `registeredMcpServers` either, where a stdio server's **name** previously
+was. Less leaves the machine as a result — and correspondingly, tool calls on those servers
+are no longer evaluated at all (see the table above).
 
 ### Paths
 
@@ -91,6 +96,7 @@ decision at all, so Claude Code proceeds exactly as if the plugin were not insta
 | RTG returns 403 | **deny** — the action is blocked |
 | RTG returns 401 (bad or expired token) | **pass through** — and latches that session open: RTG is not called again for the rest of it and every action passes through. A new session calls again. |
 | RTG returns 413 (payload too large) | **pass through** — this one request only |
+| MCP tool call on a server with no known URL | **pass through** — never evaluated at all, no request is made (since 1.4.0) |
 | RTG returns 404 or 424 | **deny** — blocked while Reva is unavailable |
 | RTG returns 5xx | **deny** — blocked while Reva is unavailable |
 | Network error or timeout | **deny** — blocked while Reva is unavailable |

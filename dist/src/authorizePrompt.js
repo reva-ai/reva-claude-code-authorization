@@ -53,7 +53,10 @@ async function main() {
     // SessionStart would. A no-op, non-blocking cache read when not yet due.
     (0, mcpIngestionTrigger_1.triggerMcpDiscoveryIfDue)(input.cwd, pluginDataDir);
     const userEmail = (0, identity_1.resolveUserEmail)();
-    const prompt = input.prompt ? (0, turnCache_1.truncatePrompt)(input.prompt) : '';
+    // One cleaned prompt for both the invokeAgent request and the turn cache, so
+    // this turn's tool calls carry the same conversation text the RTG saw here.
+    const submittedPrompt = input.prompt ? (0, turnCache_1.cleanSubmittedPrompt)(input.prompt) : '';
+    const prompt = submittedPrompt ? (0, turnCache_1.truncatePrompt)(submittedPrompt) : '';
     // UserPromptSubmit fires every turn, unlike SessionStart (once per
     // session) — a good second place to keep this session's lastSeen fresh.
     const currentSession = (0, activeSessions_1.markSessionActive)(cfg.agentId, input.session_id, process.env.CLAUDE_CODE_ENTRYPOINT || 'unknown', pluginDataDir);
@@ -62,7 +65,7 @@ async function main() {
     // and persist it (with the prompt text) so every PreToolUse call this
     // turn produces — separate, stateless hook processes — reads the same
     // value back instead of each rolling its own.
-    const turn = (0, turnCache_1.startTurn)(input.session_id, input.prompt, pluginDataDir);
+    const turn = (0, turnCache_1.startTurn)(input.session_id, submittedPrompt, pluginDataDir);
     // Same turn boundary resets the subagent spawn counter — each turn's
     // first spawn is #1 again, not a continuation of every prior turn's
     // count (see spawnCounter.ts's own comment on why).

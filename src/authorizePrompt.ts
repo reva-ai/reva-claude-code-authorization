@@ -12,7 +12,7 @@ import { resetSpawnCounter } from './spawnCounter';
 import { readStdin } from './stdin';
 import { buildSessionContext, deriveSpanId, traceparentHeader } from './trace';
 import { CedarHop, RtgResult, UserPromptSubmitInput } from './types';
-import { directSessionFromTurn, resolveTurnTraceId, startTurn, truncatePrompt } from './turnCache';
+import { cleanSubmittedPrompt, directSessionFromTurn, resolveTurnTraceId, startTurn, truncatePrompt } from './turnCache';
 
 // UserPromptSubmit uses a different, binary output schema than PreToolUse
 // (top-level decision:"block" vs hookSpecificOutput.permissionDecision).
@@ -59,7 +59,10 @@ async function main(): Promise<void> {
   triggerMcpDiscoveryIfDue(input.cwd, pluginDataDir);
 
   const userEmail = resolveUserEmail();
-  const prompt = input.prompt ? truncatePrompt(input.prompt) : '';
+  // One cleaned prompt for both the invokeAgent request and the turn cache, so
+  // this turn's tool calls carry the same conversation text the RTG saw here.
+  const submittedPrompt = input.prompt ? cleanSubmittedPrompt(input.prompt) : '';
+  const prompt = submittedPrompt ? truncatePrompt(submittedPrompt) : '';
 
   // UserPromptSubmit fires every turn, unlike SessionStart (once per
   // session) — a good second place to keep this session's lastSeen fresh.
@@ -75,7 +78,7 @@ async function main(): Promise<void> {
   // and persist it (with the prompt text) so every PreToolUse call this
   // turn produces — separate, stateless hook processes — reads the same
   // value back instead of each rolling its own.
-  const turn = startTurn(input.session_id, input.prompt, pluginDataDir);
+  const turn = startTurn(input.session_id, submittedPrompt, pluginDataDir);
   // Same turn boundary resets the subagent spawn counter — each turn's
   // first spawn is #1 again, not a continuation of every prior turn's
   // count (see spawnCounter.ts's own comment on why).

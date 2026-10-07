@@ -26,43 +26,44 @@ async function main() {
         return;
     const pluginDataDir = process.env.CLAUDE_PLUGIN_DATA;
     const cwd = process.env.REVA_SESSION_CWD || process.cwd();
-    // Rebuild the uuid -> server identity map FIRST, before anything that can
-    // fail on config or network. This is what lets the PreToolUse path resolve
-    // mcp__<uuid>__<tool> to a real slug, and it's deliberately done here, in
-    // this detached child, rather than in the hook itself: the desktop session
-    // files it reads are ~0.5-1 MB each (they embed full tool schemas), which
-    // has no business on a blocking authorization path. Unconditional and
+    // What this pass ingests: everything discovery finds, PLUS the server whose
+    // tool just got invoked, when the PreToolUse path spawned us with one.
+    //
+    // That addition was the whole point of ingest-on-invoke: discovery reads
+    // config files, so it structurally CANNOT see an app-provided server —
+    // Claude_Browser, claude-in-chrome, the iOS simulator — or a plugin's own
+    // bundled server. Those exist only as evidence in a tool name. These never
+    // have a url, though, and ingestDiscoveredMcpServers() now ignores any
+    // entry without one entirely (see its own comment) — so in practice this
+    // addition no longer changes what gets ingested. It is kept anyway,
+    // harmlessly: it still reaches the identity cache below with no url,
+    // which is the same answer a cache miss would already give.
+    const invoked = process.env.REVA_INVOKED_MCP_SERVER?.trim();
+    const discovered = (0, mcpDiscovery_1.discoverMcpServers)(cwd);
+    const withInvoked = !invoked || discovered.some((entry) => entry.name === invoked)
+        ? discovered
+        : [...discovered, { name: invoked, displayName: invoked, url: undefined }];
+    if (withInvoked !== discovered) {
+        (0, debug_1.debugLog)(`ingestMcpServers: including invoked-but-undiscoverable server "${invoked}"`);
+    }
+    const discover = () => withInvoked;
+    // Rebuild the identity map FIRST, before anything that can fail on config
+    // or network — this is what lets the PreToolUse path resolve
+    // mcp__<uuid>__<tool> to a real slug and url (for a claude.ai connector),
+    // and mcp__<name>__<tool> to a real url too (for anything file-based
+    // discovery just found). Deliberately done here, in this detached child,
+    // rather than in the hook itself: the desktop session files the connector
+    // half reads are ~0.5-1 MB each (they embed full tool schemas), which has
+    // no business on a blocking authorization path. Unconditional and
     // independent of Reva config — a machine with no valid token at all still
-    // gets correct names in its local audit trail.
+    // gets correct names (and a correct skip decision) in its local audit
+    // trail.
     try {
-        (0, mcpServerIdentity_1.refreshMcpServerIdentityCache)(pluginDataDir);
+        (0, mcpServerIdentity_1.refreshMcpServerIdentityCache)(pluginDataDir, withInvoked);
     }
     catch (err) {
         (0, debug_1.debugLog)(`ingestMcpServers: MCP server identity refresh failed — continuing (${err?.message || String(err)})`);
     }
-    // What this pass ingests: everything discovery finds, PLUS the server whose
-    // tool just got invoked, when the PreToolUse path spawned us with one.
-    //
-    // That addition is the whole point of ingest-on-invoke. Discovery reads
-    // config files, so it structurally CANNOT see an app-provided server —
-    // Claude_Browser, claude-in-chrome, the iOS simulator — or a plugin's own
-    // bundled server. Those exist only as evidence in a tool name. Before this,
-    // an invocation spawned a pass that re-ran discovery, found nothing new,
-    // and returned: the trigger fired and ingested nothing, every time.
-    //
-    // No url is available at invoke time, so it lands as a registeredMcpServers
-    // name only — no MCPServer entity, same treatment as an enabled built-in
-    // capability. It arrives ALREADY slugged: authorize.ts passes the
-    // MCPServer parent id that mapping.ts produced, so it is by construction
-    // the same string discovery would produce for that server.
-    const invoked = process.env.REVA_INVOKED_MCP_SERVER?.trim();
-    const discover = (at) => {
-        const found = (0, mcpDiscovery_1.discoverMcpServers)(at);
-        if (!invoked || found.some((entry) => entry.name === invoked))
-            return found;
-        (0, debug_1.debugLog)(`ingestMcpServers: including invoked-but-undiscoverable server "${invoked}"`);
-        return [...found, { name: invoked, displayName: invoked, url: undefined }];
-    };
     try {
         const cfg = (0, config_1.loadConfig)();
         const userEmail = (0, identity_1.resolveUserEmail)();
