@@ -15,9 +15,7 @@ import { CedarHop } from './types';
 // subsequent tool call carries it (hookInput.agent_id). So a spawn's
 // resulting lineage can't be written keyed by the child's id yet; it's
 // queued (FIFO, since spawns and their first tool calls happen in order)
-// and bound to the real id the first time that subagent is seen — the same
-// pattern reva-cowork-plugin's bindSpawnToAgent uses for the identical
-// problem.
+// and bound to the real id the first time that subagent is seen.
 //
 // Best-effort throughout, same as turnCache/spawnCounter: if the cache
 // can't be read or written, callers just get an empty chain rather than

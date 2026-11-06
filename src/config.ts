@@ -130,5 +130,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RevaConfig {
     timeoutMs: Number(env.REVA_PDP_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS,
     ingestionUrl,
     ingestionTimeoutMs: Number(env.REVA_INGESTION_TIMEOUT_MS) || DEFAULT_INGESTION_TIMEOUT_MS,
+    // On by default: this endpoint drops undeclared context fields rather
+    // than rejecting the request (the same behavior
+    // activeSessionCount/sessionId/etc. already rely on).
+    // REVA_MODEL_CONTEXT=0 (or "false") turns it off for a deployment that
+    // does enforce strict context validation.
+    modelContext: !['0', 'false'].includes((env.REVA_MODEL_CONTEXT ?? '').trim().toLowerCase()),
   };
 }

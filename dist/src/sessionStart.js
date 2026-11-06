@@ -9,6 +9,7 @@ const identity_1 = require("./identity");
 const mcpIngestionTrigger_1 = require("./mcpIngestionTrigger");
 const mcpServerIdentity_1 = require("./mcpServerIdentity");
 const runtimeScope_1 = require("./runtimeScope");
+const sessionModel_1 = require("./sessionModel");
 const stdin_1 = require("./stdin");
 async function main() {
     if ((0, runtimeScope_1.skipOutsideCodeScope)())
@@ -16,6 +17,19 @@ async function main() {
     const raw = await (0, stdin_1.readStdin)();
     const input = JSON.parse(raw);
     const pluginDataDir = process.env.CLAUDE_PLUGIN_DATA;
+    // Record which model this session starts on, for every later decision
+    // request to carry as context.model (see sessionModel.ts). First, and
+    // before loadConfig(): local bookkeeping that must not depend on Reva
+    // config. recordSessionModel swallows its own errors.
+    (0, sessionModel_1.recordSessionModel)(input.session_id, input.model, pluginDataDir);
+    (0, debug_1.debugLog)(`sessionStart: source=${input.source ?? 'unknown'} model=${input.model ?? 'absent from payload'}`);
+    // hooks.json also routes `clear|compact` here, ONLY so a session opened by
+    // /clear (a new session_id) gets its model recorded above. Everything below
+    // — ingestion and MCP discovery — previously never ran for those sources
+    // and still doesn't.
+    if (input.source === 'clear' || input.source === 'compact') {
+        process.exit(0);
+    }
     // Independent of Reva config being valid at all — this is purely local
     // bookkeeping (which session_ids are active on this machine right now),
     // resolved the same way loadConfig() would derive agentId (same

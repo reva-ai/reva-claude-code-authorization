@@ -51,12 +51,11 @@ test('missing fields entirely (bare {}): still exits 0 with empty stdout', () =>
   assert.equal(stdout, '');
 });
 
-// Regression coverage for the actual production incident this fixed:
-// ingestion used to run fully inline and fully sequential on this hook's
-// own process, so a slow or unreachable Reva tenant stalled session startup
-// itself — observed live as Claude Desktop's Chat/Cowork surfaces hanging
-// on "Working on it…" for a plain "hello", cured only by disabling the
-// plugin. sessionStart.ts now deliberately still waits for User/Agent
+// Regression coverage for a startup stall: ingestion used to run fully
+// inline and fully sequential on this hook's own process, so a slow or
+// unreachable Reva tenant stalled session startup itself, hanging the host
+// until the plugin was disabled. sessionStart.ts now deliberately still
+// waits for User/Agent
 // ingestion (Cedar policies can check a STORED registration, e.g.
 // machineId against User.registeredMachineIds, which needs that PATCH to
 // have already landed) — but User and Agent run concurrently, and MCP
@@ -67,9 +66,9 @@ test('missing fields entirely (bare {}): still exits 0 with empty stdout', () =>
 // REVA_HOST below points at 192.0.2.1 (RFC 5737 TEST-NET-1, guaranteed
 // non-routable) specifically so the connection hangs until the ingestion
 // timeout instead of failing fast — a fast local refusal wouldn't
-// distinguish "one bounded wait" from "several stacked." Per this repo's
-// standing rule, every live-ish test overrides REVA_HOST explicitly rather
-// than ever touching a real tenant.
+// distinguish "one bounded wait" from "several stacked." Every live-ish
+// test overrides REVA_HOST explicitly rather than ever touching a real
+// tenant.
 test('valid config, unreachable host: bounded by one ingestion timeout, not several stacked', () => {
   const env = {
     PATH: process.env.PATH || '',
@@ -132,7 +131,13 @@ function startDelayedIngestionServer(delayMs: number): Promise<{ port: number; s
 }
 
 test('valid config, working but slow tenant: User and Agent ingestion run concurrently', async () => {
-  const DELAY_MS = 1000;
+  // 3s, not 1s: the hook also pays a fixed cost unrelated to ingestion
+  // (Node startup, machine-id lookup, entity-type fetch) — ~0.5s alone on
+  // Windows and over 1s while the rest of the suite runs in parallel. At 1s
+  // that overhead alone could cross the 1.8x ceiling below and fail a hook
+  // that was genuinely concurrent. At 3s the ceiling leaves 2.4s of headroom
+  // for it while a sequential run (>= 6s) still fails clearly.
+  const DELAY_MS = 3000;
   const { port, stop } = await startDelayedIngestionServer(DELAY_MS);
   try {
     const env = {
@@ -146,7 +151,7 @@ test('valid config, working but slow tenant: User and Agent ingestion run concur
       input: JSON.stringify({ session_id: 's-parallel', cwd: '/tmp', source: 'startup' }),
       env,
       encoding: 'utf8',
-      timeout: 8000,
+      timeout: 12000, // above a sequential run (~6s+), so that case fails on the ceiling assertion with a clear message
     });
     const elapsedMs = Date.now() - start;
     assert.equal(status, 0);

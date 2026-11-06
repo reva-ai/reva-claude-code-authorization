@@ -10,6 +10,7 @@ import { mapToolToCedar } from './mapping';
 import { triggerMcpIngestionForInvokedServer } from './mcpIngestionTrigger';
 import { evaluate } from './rtgClient';
 import { skipOutsideCodeScope } from './runtimeScope';
+import { resolveSessionModel } from './sessionModel';
 import { readStdin } from './stdin';
 import { nextSpawnIndex } from './spawnCounter';
 import { buildSessionContext, deriveSpanId, traceparentHeader } from './trace';
@@ -107,6 +108,12 @@ async function main(): Promise<void> {
   const subagentIndex =
     mapping.actionName === 'spawn' ? nextSpawnIndex(input.session_id, pluginDataDir) : undefined;
 
+  // The model this session is running on — see sessionModel.ts. Never
+  // throws (this hook fails closed on a throw); unknown is simply omitted.
+  const sessionModel = cfg.modelContext
+    ? resolveSessionModel(input.session_id, input.transcript_path, pluginDataDir)
+    : undefined;
+
   // principal: the human who ultimately initiated this chain — resolved
   // the same way regardless of who's directly acting (Agent or SubAgent).
   const userEmail = resolveUserEmail();
@@ -154,6 +161,7 @@ async function main(): Promise<void> {
       activeSessionCount,
       currentSession,
       machineId: resolveMachineId(pluginDataDir),
+      model: sessionModel?.model,
     }),
     transmission: buildTransmission(currentHopContent, 'assistant', input.tool_name),
     session: directSessionFromTurn(input.session_id, turn),
@@ -177,7 +185,7 @@ async function main(): Promise<void> {
   debugLog(
     `-> ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}${
       subagentIndex !== undefined ? `, subagentIndex=${subagentIndex}` : ''
-    }, hops=${hops.length})`,
+    }, hops=${hops.length}, model=${sessionModel ? `${sessionModel.model ?? 'unknown'} via ${sessionModel.source}` : 'off'})`,
   );
   const result = await evaluate(cfg, request, traceparent, pluginDataDir, input.session_id);
   debugLog(`<- decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);

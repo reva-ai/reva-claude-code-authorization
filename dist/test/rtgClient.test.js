@@ -58,6 +58,7 @@ const baseCfg = {
     timeoutMs: 1000,
     ingestionUrl: 'https://rtg.test/ingestion/v2',
     ingestionTimeoutMs: 1000,
+    modelContext: true,
 };
 const baseRequest = {
     subject: { type: 'Agent', id: 'agent-a' },

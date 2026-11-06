@@ -46,9 +46,9 @@ The distinction uses host runtime markers, not tool names: Cowork also has Bash,
 Read, Write, and MCP tools. Missing or unknown runtime markers retain Code
 enforcement; an explicit Code entrypoint wins over an inherited Cowork flag.
 
-See [Desktop compatibility and investigation](docs/DESKTOP-COMPATIBILITY.md) for
-the runtime evidence, the `cowork_17092026` findings, update instructions, and
-the verification matrix. Version **1.1.0** was the first public release containing the
+See [Desktop compatibility](docs/DESKTOP-COMPATIBILITY.md) for how the plugin tells
+Code from Chat/Cowork, update instructions, and the verification matrix.
+Version **1.1.0** was the first public release containing the
 isolation fix; an older
 installed or cached plugin will continue running its older code.
 
@@ -137,9 +137,9 @@ Team rollout via `managed-settings.json`, token rotation, and uninstall are in
 | | |
 |---|---|
 | [docs/INSTALL.md](docs/INSTALL.md) | Requirements, individual and team install, updating your token |
-| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | All ten environment variables, hosts and transport, policies |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | All eleven environment variables, hosts and transport, policies |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Debug output, why everything is blocked, why nothing is governed, known limitations |
-| [docs/DESKTOP-COMPATIBILITY.md](docs/DESKTOP-COMPATIBILITY.md) | Code versus Chat/Cowork scope, investigation, verification, and rollout |
+| [docs/DESKTOP-COMPATIBILITY.md](docs/DESKTOP-COMPATIBILITY.md) | Code versus Chat/Cowork scope, verification, and rollout |
 | [SECURITY.md](SECURITY.md) | What leaves your machine, the threat model, hardening checklist, reporting a vulnerability |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Tests, the three non-negotiable rules, local mock RTG |
 | [CHANGELOG.md](CHANGELOG.md) | Release history |

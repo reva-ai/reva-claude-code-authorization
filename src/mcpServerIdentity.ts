@@ -6,7 +6,7 @@ import * as path from 'node:path';
 // and enforcement (mapping.ts). Before this module the two sides named the
 // same server differently and could never join: discovery ingested
 // "claude.ai Gmail" from ~/.claude.json's claudeAiMcpEverConnected, while
-// every actual tool call arrives as mcp__d521f7ee-ac86-4efe-a02a-2f155cd06858__
+// every actual tool call arrives as mcp__aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa__
 // <tool> and was recorded under that raw uuid. A Cedar policy written
 // against one could never match the other, and the MCPServer parent emitted
 // at invoke time referenced an entity discovery had never ingested.
@@ -29,12 +29,11 @@ import * as path from 'node:path';
 // one entity. Symmetric (enforcement collapses them identically, so nothing
 // is orphaned), and the price of a predictable format everywhere.
 //
-// Why not the uuid itself, even though it IS stable — live-confirmed the
-// same connector carries the same uuid across two different accounts on this
-// machine (Claude Docs = 1a59c906-…, visualize = 6f616b42-… under both), so
-// it's Anthropic's global connector id, not a per-install artifact: it's
-// opaque. Nobody writes or reads a governance policy against
-// d521f7ee-ac86-4efe-a02a-2f155cd06858, and it can't be reconciled against a
+// Why not the uuid itself, even though it IS stable — the same connector
+// carries the same uuid across different accounts, so it's Anthropic's
+// global connector id, not a per-install artifact: it's opaque. Nobody
+// writes or reads a governance policy against
+// aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa, and it can't be reconciled against a
 // connector directory. It's kept as an attribute for exactly that
 // cross-referencing, just not as the key.
 //
@@ -44,7 +43,7 @@ import * as path from 'node:path';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Only the two prefixes confirmed to exist in real data are stripped —
+// Only the two prefixes known to exist in real data are stripped —
 // "claude.ai Gmail" (claudeAiMcpEverConnected) and "claude_ai_Gmail" (an
 // older tool-name form). Deliberately not a looser /claude.?ai/ pattern: a
 // server genuinely named something like "claude-ai-proxy" is a real name,
@@ -289,8 +288,8 @@ export function resolveMcpServerIdentity(token: string, pluginDataDir?: string):
   // and the fallback. Without this an uppercase spelling misses the
   // (lowercase-keyed) cache AND falls back to the raw uppercase string,
   // landing one connector under two different entity ids — the exact split
-  // identity this module exists to prevent. Every tool name observed in the
-  // wild is lowercase, so this is a guard, not a fix for something seen.
+  // identity this module exists to prevent. Tool names are lowercase in
+  // practice, so this is a guard, not a fix for something seen.
   const uuid = token.toLowerCase();
   const cached = loadMcpServerIdentityCache(pluginDataDir)[uuid];
   if (cached && typeof cached.slug === 'string' && cached.slug.length > 0) return cached;

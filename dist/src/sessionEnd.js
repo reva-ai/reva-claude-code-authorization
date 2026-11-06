@@ -4,6 +4,7 @@ const activeSessions_1 = require("./activeSessions");
 const debug_1 = require("./debug");
 const deviceId_1 = require("./deviceId");
 const runtimeScope_1 = require("./runtimeScope");
+const sessionModel_1 = require("./sessionModel");
 const stdin_1 = require("./stdin");
 async function main() {
     if ((0, runtimeScope_1.skipOutsideCodeScope)())
@@ -27,6 +28,8 @@ async function main() {
             (0, debug_1.debugLog)(`sessionEnd: markSessionInactive failed — ${err?.message || String(err)}`);
         }
     }
+    // Independent of agentId — the recorded model is keyed by session only.
+    (0, sessionModel_1.clearSessionModel)(input.session_id, pluginDataDir);
     process.exit(0); // clean no-op pass-through — no stdout, nothing to block on
 }
 main().catch(() => process.exit(0));

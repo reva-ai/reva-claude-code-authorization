@@ -8,6 +8,7 @@ import { buildInvokeAgentRequest } from './invokeAgent';
 import { triggerMcpDiscoveryIfDue } from './mcpIngestionTrigger';
 import { evaluate } from './rtgClient';
 import { skipOutsideCodeScope } from './runtimeScope';
+import { resolveSessionModel } from './sessionModel';
 import { resetSpawnCounter } from './spawnCounter';
 import { readStdin } from './stdin';
 import { buildSessionContext, deriveSpanId, traceparentHeader } from './trace';
@@ -90,6 +91,12 @@ async function main(): Promise<void> {
   const traceSession = buildSessionContext(input.session_id, spanId, traceId, input.prompt_id);
   const traceparent = traceparentHeader(traceSession.traceId, traceSession.spanId);
 
+  // The model this session is running on — see sessionModel.ts. Best-effort:
+  // resolveSessionModel never throws, and an unknown model is just omitted.
+  const sessionModel = cfg.modelContext
+    ? resolveSessionModel(input.session_id, input.transcript_path, pluginDataDir)
+    : undefined;
+
   const request = buildInvokeAgentRequest(
     userEmail,
     cfg.agentId,
@@ -98,9 +105,14 @@ async function main(): Promise<void> {
     activeSessionCount,
     currentSession,
     resolveMachineId(pluginDataDir),
+    sessionModel?.model,
   );
 
-  debugLog(`-> invokeAgent as ${userEmail} on Agent:${cfg.agentId}`);
+  debugLog(
+    `-> invokeAgent as ${userEmail} on Agent:${cfg.agentId} (model=${
+      sessionModel ? `${sessionModel.model ?? 'unknown'} via ${sessionModel.source}` : 'off'
+    })`,
+  );
   const result = await evaluate(cfg, request, traceparent, pluginDataDir, input.session_id);
   debugLog(`<- decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
 

@@ -69,6 +69,7 @@ function activeSessionFields(extras) {
         agentType: ingestionClient_1.AGENT_TYPE,
         machineId: extras.machineId ?? '',
         os: osAttribute(),
+        ...(extras.model ? { model: extras.model } : {}),
     };
 }
 function buildActionContext(mapping, extras = {}) {
@@ -92,8 +93,8 @@ function buildActionContext(mapping, extras = {}) {
             return { timestamp, ...evidence, ...sessions };
     }
 }
-function buildInvokeAgentContext(activeSessionCount = 0, currentSession, machineId) {
-    return { timestamp: Date.now(), hops: [], ...activeSessionFields({ activeSessionCount, currentSession, machineId }) };
+function buildInvokeAgentContext(activeSessionCount = 0, currentSession, machineId, model) {
+    return { timestamp: Date.now(), hops: [], ...activeSessionFields({ activeSessionCount, currentSession, machineId, model }) };
 }
 // `role`/`contentType`/`promptKey` are constants here — Claude Code doesn't
 // expose a multi-role or multi-content-type concept at the hook level, only

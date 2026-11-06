@@ -43,3 +43,13 @@ test('buildInvokeAgentRequest threads machineId through to context.machineId', (
   const withoutId = buildInvokeAgentRequest('alice@example.com', 'agent-a', 'hello', session);
   assert.equal(withoutId.context.machineId, '');
 });
+
+test('buildInvokeAgentRequest threads the session model through to context.model', () => {
+  const withModel = buildInvokeAgentRequest(
+    'alice@example.com', 'agent-a', 'hello', session, 0, undefined, undefined, 'claude-opus-5-5',
+  );
+  assert.equal(withModel.context.model, 'claude-opus-5-5');
+
+  const withoutModel = buildInvokeAgentRequest('alice@example.com', 'agent-a', 'hello', session);
+  assert.equal('model' in withoutModel.context, false);
+});

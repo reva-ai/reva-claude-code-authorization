@@ -9,8 +9,8 @@ import { DirectEvalConversationMessage, DirectEvalSession } from './types';
 //
 // Also used to pin the TRACE id for an entire turn: rather than trusting
 // Claude Code's own prompt_id to reliably distinguish turns in every mode
-// (live testing showed it works via `-p --resume`, but not confirmed
-// identical in an interactive session), UserPromptSubmit mints its own
+// (it works via `-p --resume`, but is not guaranteed identical in an
+// interactive session), UserPromptSubmit mints its own
 // fresh id here and every PreToolUse call in that turn reads the same
 // value back — the plugin owns the turn boundary itself instead of relying
 // on an upstream field we don't fully control. Span ids are no longer

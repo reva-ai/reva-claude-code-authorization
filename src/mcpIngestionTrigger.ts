@@ -32,9 +32,8 @@ export function spawnMcpIngestion(cwd: string, pluginDataDir?: string, invokedSe
         // which by definition finds nothing new for a server that lives in
         // no config file — so an app-provided server (Claude_Browser,
         // claude-in-chrome, the iOS simulator) triggered a pass that ingested
-        // nothing, every time. Observed directly: the trigger fired for an
-        // app-provided server, the child ran, and the name was still absent
-        // afterwards.
+        // nothing, every time: the trigger fired for an app-provided
+        // server, the child ran, and the name was still absent afterwards.
         ...(invokedServer ? { REVA_INVOKED_MCP_SERVER: invokedServer } : {}),
       },
     });

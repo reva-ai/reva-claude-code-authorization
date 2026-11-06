@@ -10,6 +10,7 @@ const invokeAgent_1 = require("./invokeAgent");
 const mcpIngestionTrigger_1 = require("./mcpIngestionTrigger");
 const rtgClient_1 = require("./rtgClient");
 const runtimeScope_1 = require("./runtimeScope");
+const sessionModel_1 = require("./sessionModel");
 const spawnCounter_1 = require("./spawnCounter");
 const stdin_1 = require("./stdin");
 const trace_1 = require("./trace");
@@ -76,8 +77,13 @@ async function main() {
     const spanId = (0, trace_1.deriveSpanId)(traceId, 'user-prompt');
     const traceSession = (0, trace_1.buildSessionContext)(input.session_id, spanId, traceId, input.prompt_id);
     const traceparent = (0, trace_1.traceparentHeader)(traceSession.traceId, traceSession.spanId);
-    const request = (0, invokeAgent_1.buildInvokeAgentRequest)(userEmail, cfg.agentId, prompt, (0, turnCache_1.directSessionFromTurn)(input.session_id, turn), activeSessionCount, currentSession, (0, deviceId_1.resolveMachineId)(pluginDataDir));
-    (0, debug_1.debugLog)(`-> invokeAgent as ${userEmail} on Agent:${cfg.agentId}`);
+    // The model this session is running on — see sessionModel.ts. Best-effort:
+    // resolveSessionModel never throws, and an unknown model is just omitted.
+    const sessionModel = cfg.modelContext
+        ? (0, sessionModel_1.resolveSessionModel)(input.session_id, input.transcript_path, pluginDataDir)
+        : undefined;
+    const request = (0, invokeAgent_1.buildInvokeAgentRequest)(userEmail, cfg.agentId, prompt, (0, turnCache_1.directSessionFromTurn)(input.session_id, turn), activeSessionCount, currentSession, (0, deviceId_1.resolveMachineId)(pluginDataDir), sessionModel?.model);
+    (0, debug_1.debugLog)(`-> invokeAgent as ${userEmail} on Agent:${cfg.agentId} (model=${sessionModel ? `${sessionModel.model ?? 'unknown'} via ${sessionModel.source}` : 'off'})`);
     const result = await (0, rtgClient_1.evaluate)(cfg, request, traceparent, pluginDataDir, input.session_id);
     (0, debug_1.debugLog)(`<- decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
     // Record this invokeAgent as the base of this turn's hop chain regardless

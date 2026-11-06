@@ -240,3 +240,19 @@ const CONTEXT_KEYS = [
 (0, node_test_1.test)('serializeToolResponse cuts a longer response to 10000 characters plus an ellipsis', () => {
     strict_1.default.equal((0, context_1.serializeToolResponse)('x'.repeat(10001)), `${'x'.repeat(10000)}…`);
 });
+(0, node_test_1.test)('model is sent on every action when resolved, and omitted entirely when not — never a placeholder', () => {
+    const actions = [
+        { actionName: 'invokeTool', resourceType: 'Tool', resourceId: 'WebFetch' },
+        { actionName: 'spawn', resourceType: 'SubAgent', resourceId: 'Explore' },
+        { actionName: 'executeBash', resourceType: 'Directory', resourceId: '/repo', command: 'ls' },
+        { actionName: 'read', resourceType: 'File', resourceId: '/repo/a.ts' },
+        { actionName: 'glob', resourceType: 'Directory', resourceId: '/repo' },
+    ];
+    for (const mapping of actions) {
+        strict_1.default.equal((0, context_1.buildActionContext)(mapping, { model: 'claude-opus-5-5' }).model, 'claude-opus-5-5');
+        strict_1.default.equal('model' in (0, context_1.buildActionContext)(mapping), false);
+        strict_1.default.equal('model' in (0, context_1.buildActionContext)(mapping, { model: '' }), false);
+    }
+    strict_1.default.equal((0, context_1.buildInvokeAgentContext)(0, undefined, undefined, 'claude-opus-5-5').model, 'claude-opus-5-5');
+    strict_1.default.equal('model' in (0, context_1.buildInvokeAgentContext)(), false);
+});

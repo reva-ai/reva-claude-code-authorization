@@ -12,7 +12,7 @@ would like credit in the release notes, say so and we will include it.
 ## What this software is, in security terms
 
 This is an **authorization enforcement point that runs on a developer's workstation**. Claude
-Code invokes it through four hooks, and on `PreToolUse` its answer decides whether the tool call
+Code invokes it through five hooks, and on `PreToolUse` its answer decides whether the tool call
 runs at all.
 
 It is not a passive audit log. It sees the developer's prompts and the arguments of every tool
@@ -33,7 +33,7 @@ the complete set of content that leaves the machine.
 | `PreToolUse` (Bash) | The **full shell command**, verbatim. |
 | `PreToolUse` (Glob/Grep) | The search pattern. |
 | `PreToolUse` (all other tools) | `JSON.stringify(tool_input)` — the whole tool input object. For `Write` this includes **the file content being written**; for `Edit`, the **`old_string` and `new_string`**. |
-| `PostToolUse` | The **serialized tool response**, truncated to 2000 characters — i.e. file contents that were read, and command output. Since 1.3.0 it also repeats the same current-hop content `PreToolUse` sent (the command, pattern or tool input), so that one hop's request and result can be read together. |
+| `PostToolUse` | The **serialized tool response**, truncated to 10000 characters — i.e. file contents that were read, and command output. Since 1.3.0 it also repeats the same current-hop content `PreToolUse` sent (the command, pattern or tool input), so that one hop's request and result can be read together. |
 | every evaluation | The current turn's user prompt, again, as one `conversation` message. |
 
 Alongside the content, each request carries identity and resource metadata:
@@ -45,6 +45,7 @@ Alongside the content, each request carries identity and resource metadata:
 | resource id | The file, directory or repository acted on | See "Paths" below |
 | session | Session id, turn number, and a count of concurrent sessions | local |
 | correlation ids | A per-chat **thread id** — the Claude Code session id, sent as `X-Reva-Thread-Id` — plus a per-prompt trace id and a per-operation span id in the W3C `traceparent` header | local |
+| model | The name of the **Claude model** the session is running on, sent as `context.model` on every request and omitted when unknown. Set `REVA_MODEL_CONTEXT=0` to stop sending it. | `model` in the `SessionStart` hook payload, updated from the model name on the newest assistant entry of the local session transcript (only the model name is taken from it; no transcript content is sent) |
 
 At **session start** the plugin also registers entities with Reva's ingestion API: the
 developer's email, this machine's **hardware id** (`IOPlatformUUID` on macOS,

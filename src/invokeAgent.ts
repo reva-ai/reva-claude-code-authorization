@@ -13,12 +13,13 @@ export function buildInvokeAgentRequest(
   activeSessionCount = 0,
   currentSession?: ActiveSession,
   machineId?: string,
+  model?: string,
 ): CedarRequest {
   // User's schema-declared SCIM attributes have no trustworthy source in
   // this hook, so send a bare direct spec and let RTG resolve the provisioned
   // entity by type/id rather than fabricating request properties.
   const userDescriptor = buildEntityDescriptor('User', userEmail);
-  // User/Agent identities are deliberately bare. RTG Edge resolves their
+  // User/Agent identities are deliberately bare. The RTG resolves their
   // authoritative attributes from its entity store; principal already carries
   // the human relationship for this evaluation.
   const agentDescriptor = buildEntityDescriptor('Agent', agentId);
@@ -29,7 +30,7 @@ export function buildInvokeAgentRequest(
     principal: directSpecOf(userDescriptor),
     action: { name: 'invokeAgent' },
     resource: directSpecOf(agentDescriptor),
-    context: buildInvokeAgentContext(activeSessionCount, currentSession, machineId),
+    context: buildInvokeAgentContext(activeSessionCount, currentSession, machineId, model),
     transmission: buildTransmission(prompt, 'user'),
     session,
   };

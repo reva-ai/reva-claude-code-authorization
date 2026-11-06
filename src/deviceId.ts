@@ -46,11 +46,11 @@ export function readOauthEmail(claudeJsonPath?: string): string | undefined {
 }
 
 // Same source file as readOauthEmail, same OAuth login moment — accountUuid
-// is Anthropic's own stable account identifier (confirmed live: a real
-// UUID under oauthAccount, distinct from organizationUuid — the org, not
-// the person — and from the top-level userID, which looks like a
-// local/install-derived hash rather than a portable account id). Now used
-// as the Cedar `Agent` entity's id (see resolveAgentId below).
+// is Anthropic's own stable account identifier (a UUID under oauthAccount,
+// distinct from organizationUuid — the org, not the person — and from the
+// top-level userID, which looks like a local/install-derived hash rather
+// than a portable account id). Used as the Cedar `Agent` entity's id (see
+// resolveAgentId below).
 export function readOauthAccountId(claudeJsonPath?: string): string | undefined {
   try {
     const filePath =

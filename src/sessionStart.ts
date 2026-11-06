@@ -7,6 +7,7 @@ import { resolveUserEmail } from './identity';
 import { spawnMcpIngestion } from './mcpIngestionTrigger';
 import { refreshMcpServerIdentityCache } from './mcpServerIdentity';
 import { skipOutsideCodeScope } from './runtimeScope';
+import { recordSessionModel } from './sessionModel';
 import { readStdin } from './stdin';
 
 // SessionStart has no blocking/decision control at all (confirmed against
@@ -39,6 +40,10 @@ interface SessionStartInput {
   session_id: string;
   cwd: string;
   source?: string;
+  // The model this session starts on. SessionStart is the only hook whose
+  // payload carries it — persisted below for every later hook (see
+  // sessionModel.ts).
+  model?: string;
 }
 
 async function main(): Promise<void> {
@@ -46,6 +51,21 @@ async function main(): Promise<void> {
   const raw = await readStdin();
   const input: SessionStartInput = JSON.parse(raw);
   const pluginDataDir = process.env.CLAUDE_PLUGIN_DATA;
+
+  // Record which model this session starts on, for every later decision
+  // request to carry as context.model (see sessionModel.ts). First, and
+  // before loadConfig(): local bookkeeping that must not depend on Reva
+  // config. recordSessionModel swallows its own errors.
+  recordSessionModel(input.session_id, input.model, pluginDataDir);
+  debugLog(`sessionStart: source=${input.source ?? 'unknown'} model=${input.model ?? 'absent from payload'}`);
+
+  // hooks.json also routes `clear|compact` here, ONLY so a session opened by
+  // /clear (a new session_id) gets its model recorded above. Everything below
+  // — ingestion and MCP discovery — previously never ran for those sources
+  // and still doesn't.
+  if (input.source === 'clear' || input.source === 'compact') {
+    process.exit(0);
+  }
 
   // Independent of Reva config being valid at all — this is purely local
   // bookkeeping (which session_ids are active on this machine right now),
