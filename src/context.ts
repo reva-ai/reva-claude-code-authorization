@@ -24,12 +24,10 @@ import {
 // milliseconds UTC, a Long — Date.now() already is exactly this, no
 // timezone handling needed) is unaffected and still sent on every action.
 //
-// NOTE: as of the last confirmed schema, `timestamp` was only declared for
-// invokeAgent/invokeTool/invokeModel — NOT for spawn/executeBash/read/
-// write/edit/glob/grep. Sending it on those without a matching schema
-// update is exactly the kind of closed-context violation this file exists
-// to avoid — confirm those actions' schemas now also declare `timestamp`
-// before relying on this in production.
+// NOTE: `timestamp` is sent on every action, so the schema must declare it
+// for each of them (invokeAgent/invokeTool/spawn/executeBash/read/write/
+// edit/glob/grep). Sending it on an action whose schema does not is exactly
+// the kind of closed-context violation this file exists to avoid.
 //
 // Current shape per action:
 //   invokeAgent:          { timestamp (required), hops: [] }
@@ -57,11 +55,17 @@ import {
 // agentType attribute (see the comment there for why it's a hardcoded
 // constant, not runtime-detected).
 //
-// os is also sent on every action — "Linux", "Windows", or "macOS", per
-// explicit instruction: all three reported distinctly rather than folding
-// macOS into "Linux" as an earlier version of this file did (on the
-// reasoning that both share the same POSIX shell dialect — true for
-// command syntax, but not what's wanted here).
+// model is also sent on every action, whenever one was resolved and
+// RevaConfig.modelContext is on (the default) — the Claude model this
+// session is running on (see sessionModel.ts), so each decision log records
+// which model made the call. Omitted entirely when unknown, never sent as a
+// placeholder.
+//
+// os is also sent on every action — "Linux", "Windows", or "macOS": all
+// three reported distinctly rather than folding macOS into "Linux" as an
+// earlier version of this file did (on the reasoning that both share the
+// same POSIX shell dialect — true for command syntax, but not what's wanted
+// here).
 //
 // machineId is also sent on every action — this machine's own id (see
 // deviceId.ts's resolveMachineId), the same value PATCH-ADDed to
@@ -91,6 +95,10 @@ export interface ActionContextExtras {
   // interface-level comment above for why this is passed in, not resolved
   // here.
   machineId?: string;
+  // The Claude model this session is running on (see sessionModel.ts),
+  // already gated by RevaConfig.modelContext at the call site. Sent as
+  // context.model only when a real value was resolved — never a placeholder.
+  model?: string;
 }
 
 function activeTurnEvidence(extras: ActionContextExtras): Record<string, any> {
@@ -121,6 +129,7 @@ function activeSessionFields(extras: ActionContextExtras): Record<string, any> {
     agentType: AGENT_TYPE,
     machineId: extras.machineId ?? '',
     os: osAttribute(),
+    ...(extras.model ? { model: extras.model } : {}),
   };
 }
 
@@ -153,8 +162,9 @@ export function buildInvokeAgentContext(
   activeSessionCount = 0,
   currentSession?: ActiveSession,
   machineId?: string,
+  model?: string,
 ): Record<string, any> {
-  return { timestamp: Date.now(), hops: [], ...activeSessionFields({ activeSessionCount, currentSession, machineId }) };
+  return { timestamp: Date.now(), hops: [], ...activeSessionFields({ activeSessionCount, currentSession, machineId, model }) };
 }
 
 // `role`/`contentType`/`promptKey` are constants here — Claude Code doesn't

@@ -80,7 +80,7 @@ function literalDirOf(patternValue) {
 // path.resolve does NOT do shell-style "~" expansion — it treats "~" as a
 // literal folder name. Without this, a bash command like
 // "touch ~/Desktop/file.txt" resolves against cwd as if "~" were a real
-// subdirectory *inside* the repo (e.g. "domain-services/~/Desktop/file.txt"),
+// subdirectory *inside* the repo (e.g. "my-repo/~/Desktop/file.txt"),
 // which then incorrectly gets a Repository ancestor for a file that isn't
 // in the repo at all — a real policy bypass, not just a cosmetic bug.
 // Only handles the current user's home ("~" or "~/..."); "~otheruser/..."
@@ -109,9 +109,9 @@ function findRepoRoot(startDir) {
     }
 }
 // Cedar policies are authored once against a portable id like
-// "domain-services/utility/agents.md" so the same policy applies no matter
+// "my-repo/utility/notes.md" so the same policy applies no matter
 // whose machine or home directory the repo is cloned into — an absolute
-// path like "/Users/alice/repos/domain-services/..." is specific to one
+// path like "/Users/alice/repos/my-repo/..." is specific to one
 // person's machine and could never be referenced from a policy meant to
 // apply to every developer with this plugin installed. Falls back to
 // the raw absolute path only when no git repo root can be found, or the
@@ -149,7 +149,7 @@ function directoryProperties(portableId) {
 }
 // The RTG expects a FLAT list of every ancestor, not just the immediate
 // parent — Cedar's `in` needs the whole chain present to match a policy
-// like `resource in Directory::"domain-services"` regardless of how deep
+// like `resource in Directory::"my-repo"` regardless of how deep
 // the file actually is. No ancestor chain for the absolute-path fallback
 // (outside any repo) — there's no meaningful Directory/Repository lineage
 // to report for those.
@@ -269,9 +269,9 @@ function mapToolToCedar(toolName, toolInput, cwd) {
             tool: toolName,
         };
     }
-    // "Agent" is the real tool_name Claude Code uses to launch a subagent
-    // (confirmed via live testing) — "Task" is kept too since it's what the
-    // docs describe and it costs nothing to also match it.
+    // "Agent" is the real tool_name Claude Code uses to launch a subagent —
+    // "Task" is kept too since it's what the docs describe and it costs
+    // nothing to also match it.
     if (toolName === 'Agent' || toolName === 'Task') {
         const subagentType = toolInput.subagent_type || toolInput.subagentType || toolInput.agent_type || 'subagent';
         return {
@@ -287,7 +287,7 @@ function mapToolToCedar(toolName, toolInput, cwd) {
         const tool = parts.slice(2).join('__') || toolName;
         // The token here is whatever Claude Code embeds in the tool name, which
         // for a claude.ai connector in the desktop app is a bare uuid
-        // (mcp__d521f7ee-…__search_threads — live-confirmed by invoking Gmail).
+        // (e.g. mcp__aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa__search_threads).
         // Resolve it to the same slug discovery ingests, so the MCPServer parent
         // below points at an entity that actually exists. Fully fault-tolerant
         // inside (see mcpServerIdentity.ts): this runs on the PreToolUse path,

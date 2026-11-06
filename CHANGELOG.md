@@ -5,6 +5,32 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] — 2026-11-06
+
+### Added
+
+- **The model in use is now sent with every decision request** as `context.model`, so Reva's
+  decision log records which model made each call. SessionStart records the session's model;
+  UserPromptSubmit, PreToolUse and PostToolUse read it back, and a newer main-thread assistant
+  entry in the transcript wins, so a mid-session `/model` switch is picked up. It is omitted
+  when unknown, never a placeholder. It is on by default; set `REVA_MODEL_CONTEXT=0` to stop
+  sending it. `SECURITY.md`'s table of what is sent lists it.
+- SessionStart now also runs for `clear` and `compact`, only to record the model for the new
+  session; ingestion and the rest of the SessionStart work still run only on startup and
+  resume. SessionEnd removes the recorded model.
+
+### Fixed
+
+- The test suite now passes on Windows.
+
+### Documentation
+
+- `SECURITY.md`: the plugin runs five hooks (not four), and the `PostToolUse` cap is 10000
+  characters (not 2000).
+- `docs/CONFIGURATION.md`: the default and purpose of `REVA_CLAUDE_SESSIONS_DIR`, and the
+  environment-variable count, which is now eleven.
+- `docs/TROUBLESHOOTING.md`: a Reva outage fails closed, as the README already states.
+
 ## [1.4.0] — 2026-10-07
 
 ### Changed

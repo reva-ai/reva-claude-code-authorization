@@ -18,6 +18,12 @@ export interface RevaConfig {
   // waiting the same 25s default for), but the same `authorization` token.
   ingestionUrl: string;
   ingestionTimeoutMs: number;
+  // When true (the default), every action's context also carries `model` —
+  // the Claude model this session is running on (see sessionModel.ts), so
+  // each decision log records which model made the call. REVA_MODEL_CONTEXT=0
+  // or false turns it off for a deployment that strictly validates context
+  // against a schema without `model`.
+  modelContext: boolean;
 }
 
 export interface PreToolUseInput {
@@ -47,6 +53,7 @@ export interface PostToolUseInput extends PreToolUseInput {
 export interface UserPromptSubmitInput {
   session_id: string;
   prompt_id?: string;
+  transcript_path?: string;
   cwd: string;
   hook_event_name: string;
   prompt: string;
@@ -112,7 +119,7 @@ export interface DirectEvalTransmission {
   response?: string;
 }
 
-// Metadata-only sessions are explicitly supported by RTG Edge. The plugin
+// Metadata-only sessions are explicitly supported by the RTG. The plugin
 // deliberately omits `messages`: its current hooks do not observe a reliable
 // final assistant response for every completed turn, so adding history would
 // fabricate evidence or create invalid request/response pairs.
@@ -151,7 +158,7 @@ export interface RtgResult {
   inactive?: boolean;
   reason?: string;
   raw?: any;
-  // Opaque machine-readable error supplied by RTG Edge, or a synthetic
+  // Opaque machine-readable error supplied by the RTG, or a synthetic
   // RTG_UNAVAILABLE/RTG_TIMEOUT for a transport failure/timeout.
   errorType?: string;
   // The actual RTG HTTP status, or synthetic 503/504 for a transport

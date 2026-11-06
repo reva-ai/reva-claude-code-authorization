@@ -4,7 +4,7 @@
 
 ```bash
 npm ci
-npm test                                   # no network; 433 tests
+npm test                                   # no network; 484 tests
 npm run build                              # dist/ must be committed in sync with src/
 node scripts/check-no-real-identifiers.mjs # nothing real may land in a public repo
 ```

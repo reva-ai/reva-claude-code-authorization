@@ -10,9 +10,8 @@ import { RevaConfig } from './types';
 // treats every function here as best-effort: a failure must never block a
 // Claude Code session from starting, unlike rtgClient.ts's evaluate().
 //
-// User is checked (GET) and ingested every session — NOT gated behind
-// checkPrincipalExists()/principal/exists (that RTG-side check is gone for
-// good; this uses a separate, ingestion-side GET instead). If the GET finds
+// User is checked (GET) and ingested every session, using an ingestion-side
+// GET rather than any RTG-side existence check. If the GET finds
 // no User yet, one is created via a single POST with attributes:
 // [{name: "active", value: "false"}, {name: "registeredMachineIds", value:
 // machineId}, {name: "agents", value: agentId}] — no separate PATCH needed
@@ -27,7 +26,7 @@ import { RevaConfig } from './types';
 // logging in from a new machine or a new account gets appended rather than
 // replacing what's already there.
 //
-// Confirmed shapes (from the user, not guessed):
+// Request shapes used (not guessed):
 //   GET   {ingestionUrl}/policy-store/entity-types
 //         -> [{id, name, schemaName}, ...]
 //   POST  {ingestionUrl}/entity?entityTypeId={id}
@@ -46,13 +45,12 @@ import { RevaConfig } from './types';
 //         inventing an unconfirmed "overwrite" shape.
 //   PATCH {ingestionUrl}/entity/bulk?entityTypeId={id}
 //         body: [{ entityId, op: "ADD", path: "ATTRIBUTE", attributeValue: {name, value} }, ...]
-//         DELIBERATELY UNUSED for Set attributes. Live-confirmed it does NOT
-//         honour op:"ADD" as an append — eight ADD ops for
-//         registeredMcpServers in one request returned 200 and left the
-//         attribute holding ONE value, each op apparently overwriting the
-//         last. The single-entity PATCH above appends correctly and is what
-//         ingestDiscoveredMcpServers uses. The shape below was confirmed
-//         against the ingestion service's own source, not guessed:
+//         DELIBERATELY UNUSED for Set attributes. It does NOT honour
+//         op:"ADD" as an append — several ADD ops for registeredMcpServers
+//         in one request return 200 but leave the attribute holding ONE
+//         value, each op apparently overwriting the last. The single-entity
+//         PATCH above appends correctly and is what
+//         ingestDiscoveredMcpServers uses. The bulk endpoint is
 //         atomic at the HTTP level — a success response
 //         confirms every item in the list, a request-level failure
 //         (validation, ownership, downstream) confirms none of them, never a
@@ -162,10 +160,10 @@ function saveIngestionCache(entry: IngestionCacheEntry, pluginDataDir?: string):
   }
 }
 
-// Confirmed live: a cached entityTypeId that no longer resolves to a real
-// entity type (a policy-store/tenant migration reassigns these ids
-// server-side — exactly what happened here) fails with this specific 404
-// body: {"key":"RESOURCE.NOT.FOUND","message":"Entity type not found","data":"<id>"}.
+// A cached entityTypeId that no longer resolves to a real entity type (a
+// policy-store/tenant migration reassigns these ids server-side) fails with
+// this specific 404 body:
+// {"key":"RESOURCE.NOT.FOUND","message":"Entity type not found","data":"<id>"}.
 // resolveEntityTypeIds' own cache has no TTL and only ever re-fetches when a
 // value is MISSING, never when a present value has gone stale — so without
 // this, every ingestion call keeps failing against dead ids indefinitely,
@@ -176,13 +174,13 @@ function isEntityTypeNotFoundError(err: unknown): boolean {
 }
 
 // Clears the WHOLE local ingestion cache, not just the three entity-type
-// ids — confirmed live this needs to be complete, not partial: reading the
-// real User entity under a freshly-migrated entity-type id back showed only
-// {active: true}, none of registeredMachineIds/agents/registeredMcpServers,
-// even though this plugin's own knownMcpServerNames still listed several
-// MCP servers as already successfully ingested (under the now-dead ids).
-// The migration didn't just reassign entity-type ids, it left the data
-// empty under the new ones — so knownMcpServerNames is equally stale, and
+// ids — this needs to be complete, not partial: a User entity read back
+// under a freshly-migrated entity-type id can hold only {active: true},
+// none of registeredMachineIds/agents/registeredMcpServers, even though
+// this plugin's own knownMcpServerNames still lists several MCP servers as
+// already successfully ingested (under the now-dead ids). A migration
+// doesn't just reassign entity-type ids, it can leave the data empty under
+// the new ones — so knownMcpServerNames is equally stale, and
 // clearing only the ids would leave it permanently skipping servers that
 // actually need to be re-ingested from scratch, believing they're already
 // done. lastMcpDiscoveryTriggeredAt is cleared too, so the very next
@@ -266,11 +264,11 @@ export async function resolveEntityTypeIds(
 
   try {
     const types = await fetchEntityTypes(cfg);
-    // Matched by name alone — confirmed live there's exactly one entity
-    // type per name in this catalog (no cross-schema duplicates), so
-    // an earlier schemaName filter was unnecessary complexity. Warn (not
-    // fail) if that assumption is ever violated, so a silent misresolution
-    // at least leaves a trace under REVA_DEBUG=1.
+    // Matched by name alone — the catalog has exactly one entity type per
+    // name (no cross-schema duplicates), so a schemaName filter would be
+    // unnecessary complexity. Warn (not fail) if that assumption is ever
+    // violated, so a silent misresolution at least leaves a trace under
+    // REVA_DEBUG=1.
     for (const name of ['User', 'Agent', 'MCPServer']) {
       const matches = types.filter((t) => t.name === name);
       if (matches.length > 1) {
@@ -294,11 +292,11 @@ export async function resolveEntityTypeIds(
     // clears the same state, but only when a call actually FAILS with
     // "Entity type not found" — and once ids are refreshed every
     // SessionStart that failure never happens, so the only path that
-    // cleared knownMcpServerNames stopped firing. Confirmed live: after a
-    // migration the cache held the new userEntityTypeId and
-    // mcpServerEntityTypeId alongside all eight server names from the old
-    // store, so discovery found 8, subtracted 8 "known", and made zero
-    // calls — permanently. registeredMachineIds and agents came back fine
+    // cleared knownMcpServerNames stopped firing. After a migration the
+    // cache would hold the new userEntityTypeId and mcpServerEntityTypeId
+    // alongside every server name from the old store, so discovery would
+    // find N servers, subtract N "known", and make zero calls — permanently.
+    // registeredMachineIds and agents come back fine
     // in the same sessions precisely because ingestUser/ingestAgent keep no
     // local cache and re-check live every time.
     //
@@ -434,12 +432,10 @@ async function entityExists(cfg: RevaConfig, entityTypeId: string, entityId: str
 
 // "ClaudeCode" is a constant, not detected — this plugin only ever runs
 // inside Claude Code, loaded exclusively through Claude Code's own hook/
-// plugin system, so there's no real signal to detect "actually running
-// under Kiro/Codex/Cursor" from inside this codebase: those tools can't
-// load this plugin in the first place. Other Reva integrations (e.g.
-// reva-cowork-plugin's Kiro/Codex support) set their own value for their
-// own Agent. Exported since context.ts also sends this as context.agentType
-// on every evaluation request, not just ingestion's Agent.agentType.
+// plugin system, so there's no other agent type for it to detect from
+// inside this codebase. Exported since context.ts also sends this as
+// context.agentType on every evaluation request, not just ingestion's
+// Agent.agentType.
 export const AGENT_TYPE = 'ClaudeCode';
 
 // GET-then-branch, every session: entityExists() (GET, above) decides
@@ -529,9 +525,9 @@ export async function ingestUser(
 // tool, this one, so there's nothing to accumulate: agentType is always
 // AGENT_TYPE ("ClaudeCode"), full stop. (A Set was the original design
 // because the same account could in principle also be seen through a
-// different Reva integration — e.g. reva-cowork-plugin's Kiro/Codex support
-// — but that's a different plugin's ingestion call with its own value, not
-// something this file needs to account for in its own attribute shape.)
+// different tool — but that would be a different plugin's ingestion call
+// with its own value, not something this file needs to account for in its
+// own attribute shape.)
 //
 // userEmail here is only ever sent as an ATTRIBUTE VALUE on the Agent
 // entity (a reference back to which human this account belongs to) — this
@@ -583,8 +579,8 @@ export async function ingestAgent(
 // POSTs for servers already ingested, not to skip discovery itself.
 //
 // ONLY a server with a known url is ingested at all, period — not PATCHed
-// onto registeredMcpServers, not POSTed as a MCPServer entity. Per explicit
-// instruction: an entry with no url (a stdio server, an app-provided one
+// onto registeredMcpServers, not POSTed as a MCPServer entity. By design:
+// an entry with no url (a stdio server, an app-provided one
 // like claude-desktop/claude-browser/the iOS simulator, an enabled built-in
 // capability, or a claude.ai connector only known by name) is never
 // ingested — "configured on this machine" is no longer enough on its own;
@@ -607,16 +603,16 @@ export async function ingestAgent(
 // CONFIRMED settled — the registeredMcpServers PATCH (succeeded, or was
 // never attempted because the caller passed no userEntityTypeId/userEmail)
 // AND the MCPServer entity POST succeeded — never on an unconfirmed or
-// failed attempt. Confirmed live that marking known on a weaker signal was
-// wrong in practice: a single failed bulk PATCH or POST permanently hid real
-// gaps, since the entry was marked known anyway and never retried —
-// connectors observed stuck exactly this way, silently absent from the User
-// entity forever. Since the POST is one atomic call for every entry in this
+// failed attempt. Marking known on a weaker signal is wrong in practice: a
+// single failed bulk PATCH or POST would permanently hide real gaps, since
+// the entry was marked known anyway and never retried — a connector could be
+// stuck exactly this way, silently absent from the User entity forever.
+// Since the POST is one atomic call for every entry in this
 // pass rather than one call per entry, a single failure (or a transient
 // blip) holds back known-marking for the whole batch, not just the one
 // entry that would have actually failed — an inherent consequence of the
-// bulk endpoint's own atomicity (confirmed via the service's own source —
-// see this file's top comment), not a choice made here.
+// bulk endpoint's own atomicity (see this file's top comment), not a choice
+// made here.
 //
 // userEntityTypeId/userEmail are optional so a caller that only has
 // mcpServerEntityTypeId resolved can still ingest MCPServer entities
@@ -640,36 +636,32 @@ export async function ingestDiscoveredMcpServers(
   // was nothing to attempt at all (no userEntityTypeId/userEmail given —
   // this caller never asked for the User-side PATCH), false the moment an
   // attempt is actually made, flipped back to true only on confirmed
-  // success. Confirmed live this distinction matters: a stdio/connector
+  // success. This distinction matters: a stdio/connector
   // entry used to be marked known unconditionally below, regardless of
   // whether this PATCH actually succeeded — so a single failed bulk PATCH
   // (for any reason — a stale id that even the retry couldn't recover,
-  // a transient error) silently and permanently hid real gaps. Two of six
-  // real connectors were observed stuck exactly this way:
+  // a transient error) silently and permanently hid real gaps: entries
   // marked known locally, never actually present in registeredMcpServers
-  // on the real User entity, and never retried again.
+  // on the User entity, and never retried again.
   // ONE SINGLE-ENTITY PATCH PER NAME — deliberately not the bulk endpoint.
-  // Confirmed against a live deployment that PATCH /entity/bulk does not honour
-  // op:"ADD" as a Set append: a single request carrying eight ADD ops for
-  // registeredMcpServers returned 200 and left the attribute holding exactly
-  // ONE value, as though each op overwrote the last. The single endpoint,
-  // PATCH /entity/{entityId}, appends correctly — proven side by side in the
-  // same minute: [google-calendar] + ADD gmail -> [google-calendar,gmail],
-  // and it is the same call that has always accumulated
+  // PATCH /entity/bulk does not honour op:"ADD" as a Set append: a single
+  // request carrying several ADD ops for registeredMcpServers returns 200
+  // and leaves the attribute holding exactly ONE value, as though each op
+  // overwrote the last. The single endpoint, PATCH /entity/{entityId},
+  // appends correctly — [google-calendar] + ADD gmail ->
+  // [google-calendar,gmail] — and it is the same call that accumulates
   // registeredMachineIds across machines.
   //
-  // This also explains behaviour that looked like server flakiness while the
-  // bulk call was in use: the attribute appeared to oscillate between
+  // With the bulk call the attribute would also appear to oscillate between
   // different subsets of names as overlapping passes each clobbered it.
   //
   // Sequential, not concurrent: the server side is a read-modify-write, so
-  // firing these in parallel risks losing values the same way. Eight names
-  // is eight small calls, and only on a pass that actually found something
-  // new — the common steady-state pass sends nothing at all.
+  // firing these in parallel risks losing values the same way. N names is
+  // N small calls, and only on a pass that actually found something new —
+  // the common steady-state pass sends nothing at all.
   //
   // postEntitiesBulk below is NOT affected and stays bulk: creating distinct
-  // entities has no shared attribute to clobber, and it was verified to
-  // create all six MCPServer entities correctly in one call.
+  // entities has no shared attribute to clobber.
   const patchedOk = new Set<string>();
   const userPatchAttempted = Boolean(userEntityTypeId && userEmail);
   if (userEntityTypeId && userEmail) {

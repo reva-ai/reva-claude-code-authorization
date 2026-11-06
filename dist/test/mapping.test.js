@@ -58,6 +58,27 @@ function withFakeRepo(repoName, fn) {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
 }
+// A real, existing, extensionless file at an absolute path outside any repo —
+// the portable stand-in for /etc/hosts, which only exists on Linux/macOS. The
+// file must really exist so classifyPath stats it (extensionless => File only
+// via stat; the name-only fallback would call it a Directory). Handed to the
+// shell command with forward slashes, the form a Bash command uses on every
+// OS (Git Bash on Windows included).
+function withExtensionlessFile(fn) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'reva-governance-hosts-'));
+    const file = path.join(dir, 'hosts');
+    fs.writeFileSync(file, '127.0.0.1 localhost\n');
+    try {
+        fn(path.resolve(file), file.replace(/\\/g, '/'));
+    }
+    finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+}
+// Expected absolute ids are built with path.resolve rather than hardcoded
+// POSIX strings: on Linux/macOS path.resolve('/repo/src/index.ts') is exactly
+// '/repo/src/index.ts' (unchanged expectation), and on Windows it is the
+// same 'C:\\repo\\src\\index.ts' the plugin itself produces there.
 (0, node_test_1.test)('Bash maps to executeBash, falls back to cwd Directory with no clear target', () => {
     const m = (0, mapping_1.mapToolToCedar)('Bash', { command: 'npm install' }, '/repo');
     strict_1.default.equal(m.actionName, 'executeBash');
@@ -75,31 +96,33 @@ function withFakeRepo(repoName, fn) {
     strict_1.default.equal(m.resourceType, 'File');
     // Folder/file-scoped policies need a consistent absolute id regardless of
     // which tool produced it — a relative bash arg must resolve against cwd.
-    strict_1.default.equal(m.resourceId, '/repo/src/index.ts');
+    strict_1.default.equal(m.resourceId, path.resolve('/repo/src/index.ts'));
     // File.name is required by the schema
     strict_1.default.equal(m.resourceProperties?.name, 'index.ts');
 });
 (0, node_test_1.test)('Bash with an already-absolute target leaves it unchanged', () => {
-    const m = (0, mapping_1.mapToolToCedar)('Bash', { command: 'cat /etc/hosts' }, '/repo');
-    strict_1.default.equal(m.resourceType, 'File');
-    strict_1.default.equal(m.resourceId, '/etc/hosts');
+    withExtensionlessFile((absolutePath, commandPath) => {
+        const m = (0, mapping_1.mapToolToCedar)('Bash', { command: `cat ${commandPath}` }, '/repo');
+        strict_1.default.equal(m.resourceType, 'File');
+        strict_1.default.equal(m.resourceId, absolutePath);
+    });
 });
 (0, node_test_1.test)('Bash target starting with "~" expands to the real home directory, not a literal "~" subfolder', () => {
     const m = (0, mapping_1.mapToolToCedar)('Bash', { command: 'touch ~/Desktop/temp-file.txt' }, '/repo');
     const home = os.homedir();
-    strict_1.default.equal(m.resourceId, `${home}/Desktop/temp-file.txt`);
+    strict_1.default.equal(m.resourceId, path.join(home, 'Desktop', 'temp-file.txt'));
     // must never look like it's nested inside the repo cwd
     strict_1.default.ok(!m.resourceId.startsWith('/repo'));
     // outside any repo — no bogus Repository ancestor
     strict_1.default.deepEqual(m.resourceParents, []);
 });
 (0, node_test_1.test)('inside a real repo, a bash "~" target does not get falsely attributed a Repository ancestor', () => {
-    withFakeRepo('domain-services', (repoRoot) => {
+    withFakeRepo('my-repo', (repoRoot) => {
         const m = (0, mapping_1.mapToolToCedar)('Bash', { command: 'rm ~/Desktop/temp-file.txt' }, repoRoot);
         const home = os.homedir();
-        strict_1.default.equal(m.resourceId, `${home}/Desktop/temp-file.txt`);
+        strict_1.default.equal(m.resourceId, path.join(home, 'Desktop', 'temp-file.txt'));
         strict_1.default.ok(!m.resourceId.startsWith(repoRoot));
-        strict_1.default.ok(!m.resourceId.includes('domain-services'));
+        strict_1.default.ok(!m.resourceId.includes('my-repo'));
         strict_1.default.deepEqual(m.resourceParents, []);
     });
 });
@@ -107,7 +130,7 @@ function withFakeRepo(repoName, fn) {
     const m = (0, mapping_1.mapToolToCedar)('Edit', { file_path: '/repo/src/config.ts' }, '/repo');
     strict_1.default.equal(m.actionName, 'edit');
     strict_1.default.equal(m.resourceType, 'File');
-    strict_1.default.equal(m.resourceId, '/repo/src/config.ts');
+    strict_1.default.equal(m.resourceId, path.resolve('/repo/src/config.ts'));
     strict_1.default.equal(m.tool, 'Edit');
     strict_1.default.equal(m.command, undefined);
     strict_1.default.equal(m.resourceProperties?.name, 'config.ts');
@@ -137,7 +160,7 @@ function withFakeRepo(repoName, fn) {
     const m = (0, mapping_1.mapToolToCedar)('Glob', { pattern: 'src/**/*.ts' }, '/repo');
     strict_1.default.equal(m.actionName, 'glob');
     strict_1.default.equal(m.resourceType, 'Directory');
-    strict_1.default.equal(m.resourceId, '/repo/src');
+    strict_1.default.equal(m.resourceId, path.resolve('/repo/src'));
     strict_1.default.equal(m.pattern, 'src/**/*.ts');
     strict_1.default.equal(m.command, undefined);
 });
@@ -145,20 +168,20 @@ function withFakeRepo(repoName, fn) {
     const m = (0, mapping_1.mapToolToCedar)('Glob', { pattern: '**/*.md' }, '/repo');
     strict_1.default.equal(m.resourceType, 'Directory');
     // No literal directory segment before the wildcard — the safe bound is cwd itself.
-    strict_1.default.equal(m.resourceId, '/repo');
+    strict_1.default.equal(m.resourceId, path.resolve('/repo'));
 });
 (0, node_test_1.test)('Grep maps to its own grep action, Directory when path is a directory', () => {
     const m = (0, mapping_1.mapToolToCedar)('Grep', { pattern: 'TODO', path: 'src' }, '/repo');
     strict_1.default.equal(m.actionName, 'grep');
     strict_1.default.equal(m.resourceType, 'Directory');
-    strict_1.default.equal(m.resourceId, '/repo/src');
+    strict_1.default.equal(m.resourceId, path.resolve('/repo/src'));
     strict_1.default.equal(m.pattern, 'TODO');
 });
 (0, node_test_1.test)('Grep maps to File when path looks like a file (unlike Glob, which is Directory-only)', () => {
     const m = (0, mapping_1.mapToolToCedar)('Grep', { pattern: 'TODO', path: 'src/index.ts' }, '/repo');
     strict_1.default.equal(m.actionName, 'grep');
     strict_1.default.equal(m.resourceType, 'File');
-    strict_1.default.equal(m.resourceId, '/repo/src/index.ts');
+    strict_1.default.equal(m.resourceId, path.resolve('/repo/src/index.ts'));
 });
 (0, node_test_1.test)('Task maps to spawn/SubAgent', () => {
     const m = (0, mapping_1.mapToolToCedar)('Task', { subagent_type: 'Explore' }, '/repo');
@@ -206,13 +229,13 @@ function withFakeRepo(repoName, fn) {
 });
 (0, node_test_1.test)('a claude.ai connector resolved by uuid, with a cached url, has no skipReason', () => {
     withIdentityCache({
-        'd521f7ee-ac86-4efe-a02a-2f155cd06858': {
+        'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa': {
             slug: 'gmail',
             displayName: 'Gmail',
             url: 'https://gmailmcp.googleapis.com/mcp/v1',
         },
     }, () => {
-        const m = (0, mapping_1.mapToolToCedar)('mcp__d521f7ee-ac86-4efe-a02a-2f155cd06858__search_threads', {}, '/repo');
+        const m = (0, mapping_1.mapToolToCedar)('mcp__aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa__search_threads', {}, '/repo');
         strict_1.default.equal(m.skipReason, undefined);
     });
 });
@@ -239,60 +262,62 @@ function withFakeRepo(repoName, fn) {
     strict_1.default.equal(m.resourceId, 'SomeFutureTool');
 });
 (0, node_test_1.test)('inside a real repo, Edit resolves to a portable "repoName/relative/path" id, not an absolute one', () => {
-    withFakeRepo('domain-services', (repoRoot) => {
+    withFakeRepo('my-repo', (repoRoot) => {
         const filePath = path.join(repoRoot, 'src', 'foo.ts');
         const m = (0, mapping_1.mapToolToCedar)('Edit', { file_path: filePath }, repoRoot);
-        strict_1.default.equal(m.resourceId, 'domain-services/src/foo.ts');
+        strict_1.default.equal(m.resourceId, 'my-repo/src/foo.ts');
         // absolute machine path must not leak into properties either
         strict_1.default.equal(m.resourceProperties?.name, 'foo.ts');
         // ancestor chain: immediate parent dir, repo-root dir, then the Repository itself
         strict_1.default.deepEqual(m.resourceParents, [
-            { type: 'Directory', id: 'domain-services/src' },
-            { type: 'Directory', id: 'domain-services' },
-            { type: 'Repository', id: 'domain-services' },
+            { type: 'Directory', id: 'my-repo/src' },
+            { type: 'Directory', id: 'my-repo' },
+            { type: 'Repository', id: 'my-repo' },
         ]);
     });
 });
 (0, node_test_1.test)('a deeply nested file gets the COMPLETE ancestor chain, every level, no skipping', () => {
-    withFakeRepo('domain-services', (repoRoot) => {
+    withFakeRepo('my-repo', (repoRoot) => {
         const deepDir = path.join(repoRoot, 'src', 'main', 'java', 'com', 'foo');
         fs.mkdirSync(deepDir, { recursive: true });
         const filePath = path.join(deepDir, 'Bar.java');
         fs.writeFileSync(filePath, '// fixture');
         const m = (0, mapping_1.mapToolToCedar)('Read', { file_path: filePath }, repoRoot);
-        strict_1.default.equal(m.resourceId, 'domain-services/src/main/java/com/foo/Bar.java');
+        strict_1.default.equal(m.resourceId, 'my-repo/src/main/java/com/foo/Bar.java');
         strict_1.default.deepEqual(m.resourceParents, [
-            { type: 'Directory', id: 'domain-services/src/main/java/com/foo' },
-            { type: 'Directory', id: 'domain-services/src/main/java/com' },
-            { type: 'Directory', id: 'domain-services/src/main/java' },
-            { type: 'Directory', id: 'domain-services/src/main' },
-            { type: 'Directory', id: 'domain-services/src' },
-            { type: 'Directory', id: 'domain-services' },
-            { type: 'Repository', id: 'domain-services' },
+            { type: 'Directory', id: 'my-repo/src/main/java/com/foo' },
+            { type: 'Directory', id: 'my-repo/src/main/java/com' },
+            { type: 'Directory', id: 'my-repo/src/main/java' },
+            { type: 'Directory', id: 'my-repo/src/main' },
+            { type: 'Directory', id: 'my-repo/src' },
+            { type: 'Directory', id: 'my-repo' },
+            { type: 'Repository', id: 'my-repo' },
         ]);
     });
 });
 (0, node_test_1.test)('inside a real repo, a relative Bash target resolves to the same portable id', () => {
-    withFakeRepo('domain-services', (repoRoot) => {
+    withFakeRepo('my-repo', (repoRoot) => {
         const m = (0, mapping_1.mapToolToCedar)('Bash', { command: 'cat src/foo.ts' }, repoRoot);
-        strict_1.default.equal(m.resourceId, 'domain-services/src/foo.ts');
+        strict_1.default.equal(m.resourceId, 'my-repo/src/foo.ts');
     });
 });
 (0, node_test_1.test)('inside a real repo, Bash with no clear target resolves to just the repo name, no self-referential parent', () => {
-    withFakeRepo('domain-services', (repoRoot) => {
+    withFakeRepo('my-repo', (repoRoot) => {
         const m = (0, mapping_1.mapToolToCedar)('Bash', { command: 'npm install' }, repoRoot);
         strict_1.default.equal(m.resourceType, 'Directory');
-        strict_1.default.equal(m.resourceId, 'domain-services');
-        // only the Repository — must NOT list "Directory: domain-services" as
+        strict_1.default.equal(m.resourceId, 'my-repo');
+        // only the Repository — must NOT list "Directory: my-repo" as
         // its own parent
-        strict_1.default.deepEqual(m.resourceParents, [{ type: 'Repository', id: 'domain-services' }]);
+        strict_1.default.deepEqual(m.resourceParents, [{ type: 'Repository', id: 'my-repo' }]);
     });
 });
 (0, node_test_1.test)('inside a real repo, a path outside the repo falls back to the absolute path with no ancestor chain', () => {
-    withFakeRepo('domain-services', (repoRoot) => {
-        const m = (0, mapping_1.mapToolToCedar)('Bash', { command: 'cat /etc/hosts' }, repoRoot);
-        strict_1.default.equal(m.resourceId, '/etc/hosts');
-        strict_1.default.deepEqual(m.resourceParents, []);
+    withFakeRepo('my-repo', (repoRoot) => {
+        withExtensionlessFile((absolutePath, commandPath) => {
+            const m = (0, mapping_1.mapToolToCedar)('Bash', { command: `cat ${commandPath}` }, repoRoot);
+            strict_1.default.equal(m.resourceId, absolutePath);
+            strict_1.default.deepEqual(m.resourceParents, []);
+        });
     });
 });
 // --- MCP server identity resolution at invoke time -------------------------
@@ -327,17 +352,17 @@ function withIdentityCache(entries, fn) {
 }
 (0, node_test_1.test)('a claude.ai connector uuid in the tool name resolves to the slug discovery ingests', () => {
     // This is the bug this whole change exists for: the desktop app invokes
-    // Gmail as mcp__d521f7ee-…__search_threads (live-confirmed), while
+    // Gmail as mcp__aaaaaaaa-1111-…__search_threads, while
     // discovery ingested "claude.ai Gmail". Both must now say "gmail", or a
     // policy on one can never match the other.
     withIdentityCache({
-        'd521f7ee-ac86-4efe-a02a-2f155cd06858': {
+        'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa': {
             slug: 'gmail',
             displayName: 'Gmail',
             url: 'https://gmailmcp.googleapis.com/mcp/v1',
         },
     }, () => {
-        const m = (0, mapping_1.mapToolToCedar)('mcp__d521f7ee-ac86-4efe-a02a-2f155cd06858__search_threads', {}, '/repo');
+        const m = (0, mapping_1.mapToolToCedar)('mcp__aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa__search_threads', {}, '/repo');
         strict_1.default.equal(m.resourceId, 'gmail/search_threads');
         strict_1.default.deepEqual(m.resourceParents, [{ type: 'MCPServer', id: 'gmail' }]);
         // The readable name shows up in the description, so an audit entry
@@ -371,8 +396,8 @@ function withIdentityCache(entries, fn) {
         withPluginDataDir(dir, () => {
             // A throw here would reach authorize.ts's catch and DENY a legitimate
             // tool call, so this degrading quietly is the actual requirement.
-            const m = (0, mapping_1.mapToolToCedar)('mcp__d521f7ee-ac86-4efe-a02a-2f155cd06858__search_threads', {}, '/repo');
-            strict_1.default.equal(m.resourceId, 'd521f7ee-ac86-4efe-a02a-2f155cd06858/search_threads');
+            const m = (0, mapping_1.mapToolToCedar)('mcp__aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa__search_threads', {}, '/repo');
+            strict_1.default.equal(m.resourceId, 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa/search_threads');
         });
     }
     finally {

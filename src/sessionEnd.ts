@@ -2,6 +2,7 @@ import { markSessionInactive } from './activeSessions';
 import { debugLog } from './debug';
 import { resolveAgentId } from './deviceId';
 import { skipOutsideCodeScope } from './runtimeScope';
+import { clearSessionModel } from './sessionModel';
 import { readStdin } from './stdin';
 
 // SessionEnd has no blocking/decision control (same as SessionStart) — it's
@@ -44,6 +45,9 @@ async function main(): Promise<void> {
       debugLog(`sessionEnd: markSessionInactive failed — ${err?.message || String(err)}`);
     }
   }
+
+  // Independent of agentId — the recorded model is keyed by session only.
+  clearSessionModel(input.session_id, pluginDataDir);
 
   process.exit(0); // clean no-op pass-through — no stdout, nothing to block on
 }

@@ -272,3 +272,20 @@ test('serializeToolResponse keeps a response of up to 10000 characters whole', (
 test('serializeToolResponse cuts a longer response to 10000 characters plus an ellipsis', () => {
   assert.equal(serializeToolResponse('x'.repeat(10001)), `${'x'.repeat(10000)}…`);
 });
+
+test('model is sent on every action when resolved, and omitted entirely when not — never a placeholder', () => {
+  const actions: CedarActionMapping[] = [
+    { actionName: 'invokeTool', resourceType: 'Tool', resourceId: 'WebFetch' },
+    { actionName: 'spawn', resourceType: 'SubAgent', resourceId: 'Explore' },
+    { actionName: 'executeBash', resourceType: 'Directory', resourceId: '/repo', command: 'ls' },
+    { actionName: 'read', resourceType: 'File', resourceId: '/repo/a.ts' },
+    { actionName: 'glob', resourceType: 'Directory', resourceId: '/repo' },
+  ];
+  for (const mapping of actions) {
+    assert.equal(buildActionContext(mapping, { model: 'claude-opus-5-5' }).model, 'claude-opus-5-5');
+    assert.equal('model' in buildActionContext(mapping), false);
+    assert.equal('model' in buildActionContext(mapping, { model: '' }), false);
+  }
+  assert.equal(buildInvokeAgentContext(0, undefined, undefined, 'claude-opus-5-5').model, 'claude-opus-5-5');
+  assert.equal('model' in buildInvokeAgentContext(), false);
+});

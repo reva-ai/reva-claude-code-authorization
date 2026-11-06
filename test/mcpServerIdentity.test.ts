@@ -44,9 +44,9 @@ function writeDesktopSession(
 }
 
 test('slugifies the real display names this machine actually has', () => {
-  // These six are the live connectors confirmed on a real machine — the
-  // whole point of the slug is that "Google Calendar" here produces the same
-  // id discovery produces from "claude.ai Google Calendar".
+  // These are real claude.ai connector display names — the whole point of
+  // the slug is that "Google Calendar" here produces the same id discovery
+  // produces from "claude.ai Google Calendar".
   assert.equal(slugifyMcpServerName('Gmail'), 'gmail');
   assert.equal(slugifyMcpServerName('Google Calendar'), 'google-calendar');
   assert.equal(slugifyMcpServerName('Google Drive'), 'google-drive');
@@ -85,24 +85,24 @@ test('a name that is nothing but the prefix keeps its original rather than slugg
 });
 
 test('recognizes a connector uuid, and does not mistake an ordinary name for one', () => {
-  assert.equal(isMcpServerUuid('d521f7ee-ac86-4efe-a02a-2f155cd06858'), true);
-  assert.equal(isMcpServerUuid('D521F7EE-AC86-4EFE-A02A-2F155CD06858'), true);
+  assert.equal(isMcpServerUuid('aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa'), true);
+  assert.equal(isMcpServerUuid('AAAAAAAA-1111-4111-8111-AAAAAAAAAAAA'), true);
   assert.equal(isMcpServerUuid('computer-use'), false);
   assert.equal(isMcpServerUuid('plugin_context7_context7'), false);
-  assert.equal(isMcpServerUuid('d521f7ee-ac86-4efe-a02a'), false);
+  assert.equal(isMcpServerUuid('aaaaaaaa-1111-4111-8111'), false);
 });
 
 test('reads connectors out of the desktop app session files, newest file winning on a repeat', async () => {
   await withTempDir(async (dir) => {
     const sessionsDir = path.join(dir, 'sessions');
     writeDesktopSession(sessionsDir, [
-      { uuid: 'd521f7ee-ac86-4efe-a02a-2f155cd06858', name: 'Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
+      { uuid: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', name: 'Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
     ]);
 
     await withSessionsDir(sessionsDir, () => {
       const connectors = readDesktopConnectors();
       assert.deepEqual(connectors, [
-        { uuid: 'd521f7ee-ac86-4efe-a02a-2f155cd06858', name: 'Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
+        { uuid: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', name: 'Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
       ]);
     });
   });
@@ -121,12 +121,12 @@ test('resolves a uuid to its slug through the cache, and caches display name and
     const sessionsDir = path.join(dir, 'sessions');
     const pluginDataDir = path.join(dir, 'plugin-data');
     writeDesktopSession(sessionsDir, [
-      { uuid: '909251a2-69a2-46d6-913c-98346626cc26', name: 'Google Calendar', url: 'https://calendarmcp.googleapis.com/mcp/v1' },
+      { uuid: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb', name: 'Google Calendar', url: 'https://calendarmcp.googleapis.com/mcp/v1' },
     ]);
 
     await withSessionsDir(sessionsDir, () => {
       refreshMcpServerIdentityCache(pluginDataDir);
-      const identity = resolveMcpServerIdentity('909251a2-69a2-46d6-913c-98346626cc26', pluginDataDir);
+      const identity = resolveMcpServerIdentity('bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb', pluginDataDir);
       assert.equal(identity.slug, 'google-calendar');
       assert.equal(identity.displayName, 'Google Calendar');
       assert.equal(identity.url, 'https://calendarmcp.googleapis.com/mcp/v1');
@@ -215,21 +215,21 @@ test('the cache is MERGED on refresh, so a disconnected connector keeps resolvin
     const pluginDataDir = path.join(dir, 'plugin-data');
 
     writeDesktopSession(sessionsDir, [
-      { uuid: 'd521f7ee-ac86-4efe-a02a-2f155cd06858', name: 'Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
+      { uuid: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', name: 'Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
     ]);
     await withSessionsDir(sessionsDir, () => refreshMcpServerIdentityCache(pluginDataDir));
 
     // Gmail is gone from the session files entirely on the next pass.
     writeDesktopSession(sessionsDir, [
-      { uuid: '8a95076b-b7a6-4bda-ada3-40a16903e98e', name: 'Miro', url: 'https://mcp.miro.com' },
+      { uuid: 'dddddddd-4444-4444-8444-dddddddddddd', name: 'Miro', url: 'https://mcp.miro.com' },
     ]);
     await withSessionsDir(sessionsDir, () => refreshMcpServerIdentityCache(pluginDataDir));
 
     // A tool call from a now-disconnected connector must still be
     // attributable — reverting it to a raw uuid would quietly corrupt the
     // audit trail for history that was already recorded under "gmail".
-    assert.equal(resolveMcpServerIdentity('d521f7ee-ac86-4efe-a02a-2f155cd06858', pluginDataDir).slug, 'gmail');
-    assert.equal(resolveMcpServerIdentity('8a95076b-b7a6-4bda-ada3-40a16903e98e', pluginDataDir).slug, 'miro');
+    assert.equal(resolveMcpServerIdentity('aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', pluginDataDir).slug, 'gmail');
+    assert.equal(resolveMcpServerIdentity('dddddddd-4444-4444-8444-dddddddddddd', pluginDataDir).slug, 'miro');
   });
 });
 
@@ -243,8 +243,8 @@ test('a corrupt or absent cache degrades to the raw token instead of throwing', 
     // a throw here would deny a legitimate tool call.
     assert.deepEqual(loadMcpServerIdentityCache(pluginDataDir), {});
     assert.equal(
-      resolveMcpServerIdentity('d521f7ee-ac86-4efe-a02a-2f155cd06858', pluginDataDir).slug,
-      'd521f7ee-ac86-4efe-a02a-2f155cd06858',
+      resolveMcpServerIdentity('aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', pluginDataDir).slug,
+      'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
     );
     assert.equal(resolveMcpServerIdentity('computer-use', pluginDataDir).slug, 'computer-use');
   });
@@ -254,16 +254,16 @@ test('no pluginDataDir at all is survivable — nothing is written, resolution s
   await withTempDir(async (dir) => {
     const sessionsDir = path.join(dir, 'sessions');
     writeDesktopSession(sessionsDir, [
-      { uuid: 'd521f7ee-ac86-4efe-a02a-2f155cd06858', name: 'Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
+      { uuid: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', name: 'Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
     ]);
 
     await withSessionsDir(sessionsDir, () => {
       const map = refreshMcpServerIdentityCache(undefined);
-      assert.equal(map['d521f7ee-ac86-4efe-a02a-2f155cd06858'].slug, 'gmail');
+      assert.equal(map['aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa'].slug, 'gmail');
       // Nothing persisted, so a later resolve falls back rather than lying.
       assert.equal(
-        resolveMcpServerIdentity('d521f7ee-ac86-4efe-a02a-2f155cd06858', undefined).slug,
-        'd521f7ee-ac86-4efe-a02a-2f155cd06858',
+        resolveMcpServerIdentity('aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', undefined).slug,
+        'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
       );
     });
   });
@@ -274,15 +274,15 @@ test('a uuid resolves case-insensitively — one connector can never land under 
     const sessionsDir = path.join(dir, 'sessions');
     const pluginDataDir = path.join(dir, 'plugin-data');
     writeDesktopSession(sessionsDir, [
-      { uuid: 'd521f7ee-ac86-4efe-a02a-2f155cd06858', name: 'Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
+      { uuid: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', name: 'Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
     ]);
 
     await withSessionsDir(sessionsDir, () => {
       refreshMcpServerIdentityCache(pluginDataDir);
-      assert.equal(resolveMcpServerIdentity('d521f7ee-ac86-4efe-a02a-2f155cd06858', pluginDataDir).slug, 'gmail');
+      assert.equal(resolveMcpServerIdentity('aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', pluginDataDir).slug, 'gmail');
       // isMcpServerUuid accepts either case, so an uppercase spelling must
       // not miss the cache and fall through to a raw uppercase id.
-      assert.equal(resolveMcpServerIdentity('D521F7EE-AC86-4EFE-A02A-2F155CD06858', pluginDataDir).slug, 'gmail');
+      assert.equal(resolveMcpServerIdentity('AAAAAAAA-1111-4111-8111-AAAAAAAAAAAA', pluginDataDir).slug, 'gmail');
     });
   });
 });

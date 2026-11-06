@@ -38,3 +38,9 @@ const session = {
     const withoutId = (0, invokeAgent_1.buildInvokeAgentRequest)('alice@example.com', 'agent-a', 'hello', session);
     strict_1.default.equal(withoutId.context.machineId, '');
 });
+(0, node_test_1.test)('buildInvokeAgentRequest threads the session model through to context.model', () => {
+    const withModel = (0, invokeAgent_1.buildInvokeAgentRequest)('alice@example.com', 'agent-a', 'hello', session, 0, undefined, undefined, 'claude-opus-5-5');
+    strict_1.default.equal(withModel.context.model, 'claude-opus-5-5');
+    const withoutModel = (0, invokeAgent_1.buildInvokeAgentRequest)('alice@example.com', 'agent-a', 'hello', session);
+    strict_1.default.equal('model' in withoutModel.context, false);
+});

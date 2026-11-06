@@ -44,9 +44,8 @@ Two consequences follow, and both are tested:
 
 As recorded in the source, Desktop 2.110.1 launches its local-agent Chat/Cowork runtime
 with `CLAUDE_CODE_ENTRYPOINT=local-agent` and `CLAUDE_CODE_IS_COWORK=1`, and its Code
-runtime with `claude-desktop` or `claude-desktop-3p`. The underlying investigation is
-tracked outside this repository; this page documents the behaviour the code implements and
-the tests that hold it in place.
+runtime with `claude-desktop` or `claude-desktop-3p`. This page documents the behaviour the
+code implements and the tests that hold it in place.
 
 ## What a hook does on an excluded surface
 

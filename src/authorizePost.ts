@@ -9,6 +9,7 @@ import { resolveAgentContext, resolveUserEmail } from './identity';
 import { mapToolToCedar } from './mapping';
 import { evaluate } from './rtgClient';
 import { skipOutsideCodeScope } from './runtimeScope';
+import { resolveSessionModel } from './sessionModel';
 import { readStdin } from './stdin';
 import { buildSessionContext, deriveSpanId, traceparentHeader } from './trace';
 import { CedarEntityDescriptor, CedarRequest, RtgResult, PostToolUseInput } from './types';
@@ -103,6 +104,11 @@ async function main(): Promise<void> {
     mapping.command?.trim() || mapping.pattern?.trim() ||
     (serializedInput !== '{}' ? serializedInput : input.tool_name);
 
+  // Same model resolution as PreToolUse — see sessionModel.ts. Never throws.
+  const sessionModel = cfg.modelContext
+    ? resolveSessionModel(input.session_id, input.transcript_path, pluginDataDir)
+    : undefined;
+
   const request: CedarRequest = {
     subject: directSpecOf(subjectDescriptor),
     principal: directSpecOf(userDescriptor),
@@ -114,6 +120,7 @@ async function main(): Promise<void> {
       activeSessionCount,
       currentSession,
       machineId: resolveMachineId(pluginDataDir),
+      model: sessionModel?.model,
     }),
     // userQuery matches PreToolUse; the tool result is transmission.response,
     // not closed Cedar context, so the evaluate payload carries it without a
@@ -123,7 +130,9 @@ async function main(): Promise<void> {
   };
 
   debugLog(
-    `-> post ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}, hops=${hops.length})`,
+    `-> post ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}, hops=${hops.length}, model=${
+      sessionModel ? `${sessionModel.model ?? 'unknown'} via ${sessionModel.source}` : 'off'
+    })`,
   );
   const result = await evaluate(cfg, request, traceparent, pluginDataDir, input.session_id);
   debugLog(`<- post decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);

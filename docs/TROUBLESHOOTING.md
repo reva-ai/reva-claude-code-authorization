@@ -11,8 +11,8 @@ stderr. Almost everything below is diagnosable from that output.
 
 ## Every action is blocked
 
-The plugin fails closed on **misconfiguration** (as opposed to a Reva outage, which fails
-open). Three causes, in order of likelihood:
+The plugin fails closed on **misconfiguration**, and on a Reva outage too (see below).
+Three causes, in order of likelihood:
 
 **`REVA_AUTH_TOKEN` is not set.** With debug on you will see
 `Reva governance is not configured — missing: REVA_AUTH_TOKEN`. If you set it with
@@ -30,7 +30,7 @@ a configuration problem. Check the decision log in your Reva console.
 
 ## Nothing appears to be governed
 
-Since 2.x the plugin fails **closed** when Reva cannot give an answer, so an outage shows
+Since 1.1.0 the plugin fails **closed** when Reva cannot give an answer, so an outage shows
 up as everything being blocked, not as ungoverned work. Two cases still pass through
 silently: a rejected token (401), for the rest of that session, and an oversized payload
 (413). Run

@@ -22,6 +22,7 @@ const baseCfg: RevaConfig = {
   timeoutMs: 1000,
   ingestionUrl: 'https://rtg.test/ingestion/v2',
   ingestionTimeoutMs: 1000,
+  modelContext: true,
 };
 
 const baseRequest: CedarRequest = {

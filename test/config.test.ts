@@ -102,3 +102,10 @@ test('throws when REVA_AGENT_ID is missing and no Anthropic account is logged in
     else process.env.REVA_CLAUDE_JSON_PATH = originalPath;
   }
 });
+
+test('modelContext is on by default, and REVA_MODEL_CONTEXT=0/false turns it off', () => {
+  assert.equal(loadConfig(TOKEN_ENV).modelContext, true);
+  assert.equal(loadConfig({ ...TOKEN_ENV, REVA_MODEL_CONTEXT: '1' }).modelContext, true);
+  assert.equal(loadConfig({ ...TOKEN_ENV, REVA_MODEL_CONTEXT: '0' }).modelContext, false);
+  assert.equal(loadConfig({ ...TOKEN_ENV, REVA_MODEL_CONTEXT: ' FALSE ' }).modelContext, false);
+});

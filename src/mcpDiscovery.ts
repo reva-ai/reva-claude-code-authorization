@@ -9,8 +9,8 @@ import { readDesktopConnectors, slugifyMcpServerName } from './mcpServerIdentity
 // Cowork and Desktop-app-only setups often have neither.
 //
 // Deliberately NOT covered: MCP servers bundled inside a plugin (e.g.
-// "plugin:context7:context7" in claude mcp list's output). Confirmed live
-// that Claude itself does count those as real MCP server entries — this
+// "plugin:context7:context7" in claude mcp list's output). Claude itself
+// does count those as real MCP server entries — this
 // isn't a correctness fix, it's a scope decision: a plugin's own bundled
 // server isn't something the user directly configured, so it's excluded on
 // purpose, not because it's technically undetectable (it would just mean
@@ -28,10 +28,10 @@ import { readDesktopConnectors, slugifyMcpServerName } from './mcpServerIdentity
 //   3. Local-scoped:    ~/.claude.json             -> projects[cwd].mcpServers
 //   4. claude.ai account connectors (Gmail, Drive, Calendar, ...):
 //      ~/.claude.json -> claudeAiMcpEverConnected
-//      This one lags: live-confirmed a freshly-added connector wasn't
-//      reflected here immediately, though a later check confirmed it does
-//      catch up. Accepted anyway, same reasoning as everything else here —
-//      no dependency on the CLI — and the delay is tolerable since this
+//      This one lags: a freshly-added connector isn't reflected here
+//      immediately, though it does catch up later. Accepted anyway, same
+//      reasoning as everything else here — no dependency on the CLI — and
+//      the delay is tolerable since this
 //      gets PATCHed onto an accumulating Set (registeredMcpServers), not
 //      read as a point-in-time snapshot: a late catch-up still lands
 //      correctly, just later than the session the connector was actually
@@ -40,7 +40,7 @@ import { readDesktopConnectors, slugifyMcpServerName } from './mcpServerIdentity
 //      control): ~/.claude.json -> projects[*].enabledMcpServers
 //      A different shape than sources 2/3 above: a plain array of names,
 //      not a name->config dictionary — these are product-level
-//      capabilities toggled on per project, confirmed live to exist with
+//      capabilities toggled on per project, which exist with
 //      no corresponding mcpServers dictionary entry at all, so sources 2/3
 //      never see them. Scanned across EVERY project entry, not just cwd's
 //      — unlike local-scope mcpServers just above (deliberately per-repo,
@@ -55,16 +55,16 @@ import { readDesktopConnectors, slugifyMcpServerName } from './mcpServerIdentity
 //      uuid that actually appears in tool names, the display name, AND a real
 //      url — so these can finally become full MCPServer entities with a
 //      baseUrl instead of bare names on a Set. It's also current rather than
-//      "ever connected": live-confirmed it caught `visualize`, connected but
-//      absent from claudeAiMcpEverConnected, while that list still carried a
-//      Google Drive that wasn't connected any more. Source 4 is kept anyway
+//      "ever connected": it can list a connector that is connected but
+//      absent from claudeAiMcpEverConnected, while that list can still carry a
+//      connector that isn't connected any more. Source 4 is kept anyway
 //      — it's the only one of the two that survives on a non-macOS or
 //      CLI-only host, where these files don't exist at all.
 
 export interface DiscoveredMcpServer {
   // The server's canonical id, matching what mapping.ts emits at invoke
   // time. For a claude.ai connector this is a slug derived from its display
-  // name ("claude.ai Gmail" and the uuid d521f7ee-… both land on "gmail");
+  // name ("claude.ai Gmail" and the uuid aaaaaaaa-1111-… both land on "gmail");
   // for everything else it is the configured key, verbatim.
   name: string;
   // Present for a remote/http server; absent for stdio/local-only, an

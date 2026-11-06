@@ -12,6 +12,7 @@ const mapping_1 = require("./mapping");
 const mcpIngestionTrigger_1 = require("./mcpIngestionTrigger");
 const rtgClient_1 = require("./rtgClient");
 const runtimeScope_1 = require("./runtimeScope");
+const sessionModel_1 = require("./sessionModel");
 const stdin_1 = require("./stdin");
 const spawnCounter_1 = require("./spawnCounter");
 const trace_1 = require("./trace");
@@ -97,6 +98,11 @@ async function main() {
     // increments) for actual Task spawns, so unrelated tool calls don't
     // advance the counter.
     const subagentIndex = mapping.actionName === 'spawn' ? (0, spawnCounter_1.nextSpawnIndex)(input.session_id, pluginDataDir) : undefined;
+    // The model this session is running on — see sessionModel.ts. Never
+    // throws (this hook fails closed on a throw); unknown is simply omitted.
+    const sessionModel = cfg.modelContext
+        ? (0, sessionModel_1.resolveSessionModel)(input.session_id, input.transcript_path, pluginDataDir)
+        : undefined;
     // principal: the human who ultimately initiated this chain — resolved
     // the same way regardless of who's directly acting (Agent or SubAgent).
     const userEmail = (0, identity_1.resolveUserEmail)();
@@ -133,6 +139,7 @@ async function main() {
             activeSessionCount,
             currentSession,
             machineId: (0, deviceId_1.resolveMachineId)(pluginDataDir),
+            model: sessionModel?.model,
         }),
         transmission: (0, context_1.buildTransmission)(currentHopContent, 'assistant', input.tool_name),
         session: (0, turnCache_1.directSessionFromTurn)(input.session_id, turn),
@@ -151,7 +158,7 @@ async function main() {
         };
         (0, hopChain_1.enqueuePendingSpawnLineage)(input.session_id, hops, spawnHop, pluginDataDir);
     }
-    (0, debug_1.debugLog)(`-> ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}${subagentIndex !== undefined ? `, subagentIndex=${subagentIndex}` : ''}, hops=${hops.length})`);
+    (0, debug_1.debugLog)(`-> ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}${subagentIndex !== undefined ? `, subagentIndex=${subagentIndex}` : ''}, hops=${hops.length}, model=${sessionModel ? `${sessionModel.model ?? 'unknown'} via ${sessionModel.source}` : 'off'})`);
     const result = await (0, rtgClient_1.evaluate)(cfg, request, traceparent, pluginDataDir, input.session_id);
     (0, debug_1.debugLog)(`<- decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
     writeDecision(result);

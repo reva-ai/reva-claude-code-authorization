@@ -334,8 +334,8 @@ test('source 6: discovers claude.ai connectors from the desktop app\'s remoteMcp
     writeJson(claudeJson, {});
     const sessionsDir = path.join(dir, 'sessions');
     writeDesktopSession(sessionsDir, [
-      { uuid: '909251a2-69a2-46d6-913c-98346626cc26', name: 'Google Calendar', url: 'https://calendarmcp.googleapis.com/mcp/v1' },
-      { uuid: 'd521f7ee-ac86-4efe-a02a-2f155cd06858', name: 'Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
+      { uuid: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb', name: 'Google Calendar', url: 'https://calendarmcp.googleapis.com/mcp/v1' },
+      { uuid: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', name: 'Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
     ]);
 
     await withClaudeJson(
@@ -346,13 +346,13 @@ test('source 6: discovers claude.ai connectors from the desktop app\'s remoteMcp
             name: 'google-calendar',
             displayName: 'Google Calendar',
             url: 'https://calendarmcp.googleapis.com/mcp/v1',
-            uuid: '909251a2-69a2-46d6-913c-98346626cc26',
+            uuid: 'bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb',
           },
           {
             name: 'gmail',
             displayName: 'Gmail',
             url: 'https://gmailmcp.googleapis.com/mcp/v1',
-            uuid: 'd521f7ee-ac86-4efe-a02a-2f155cd06858',
+            uuid: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa',
           },
         ]);
       },
@@ -371,7 +371,7 @@ test('source 6 wins over claudeAiMcpEverConnected for the same connector — the
     writeJson(claudeJson, { claudeAiMcpEverConnected: ['claude.ai Gmail'] });
     const sessionsDir = path.join(dir, 'sessions');
     writeDesktopSession(sessionsDir, [
-      { uuid: 'd521f7ee-ac86-4efe-a02a-2f155cd06858', name: 'Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
+      { uuid: 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa', name: 'Gmail', url: 'https://gmailmcp.googleapis.com/mcp/v1' },
     ]);
 
     await withClaudeJson(
@@ -383,7 +383,7 @@ test('source 6 wins over claudeAiMcpEverConnected for the same connector — the
         // Would be undefined if source 4 had won — that regression is the
         // whole reason the source order is deliberate.
         assert.equal(result[0].url, 'https://gmailmcp.googleapis.com/mcp/v1');
-        assert.equal(result[0].uuid, 'd521f7ee-ac86-4efe-a02a-2f155cd06858');
+        assert.equal(result[0].uuid, 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa');
       },
       sessionsDir,
     );
@@ -396,19 +396,19 @@ test('source 6 scans every account/org, de-duplicates a connector seen in more t
     const claudeJson = path.join(dir, '.claude.json');
     writeJson(claudeJson, {});
     const sessionsDir = path.join(dir, 'sessions');
-    // Live-confirmed the same connector carries the same uuid across two
-    // different accounts on one machine, so this collapses to one entry.
+    // The same connector carries the same uuid across two different
+    // accounts on one machine, so this collapses to one entry.
     writeDesktopSession(
       sessionsDir,
-      [{ uuid: '1a59c906-04da-521d-bda7-7f71b9f9e01c', name: 'Claude Docs', url: 'https://api.anthropic.com/v1/pages/mcp' }],
+      [{ uuid: 'cccccccc-3333-4333-8333-cccccccccccc', name: 'Claude Docs', url: 'https://api.anthropic.com/v1/pages/mcp' }],
       'account-1',
       'org-1',
     );
     writeDesktopSession(
       sessionsDir,
       [
-        { uuid: '1a59c906-04da-521d-bda7-7f71b9f9e01c', name: 'Claude Docs', url: 'https://api.anthropic.com/v1/pages/mcp' },
-        { uuid: '8a95076b-b7a6-4bda-ada3-40a16903e98e', name: 'Miro', url: 'https://mcp.miro.com' },
+        { uuid: 'cccccccc-3333-4333-8333-cccccccccccc', name: 'Claude Docs', url: 'https://api.anthropic.com/v1/pages/mcp' },
+        { uuid: 'dddddddd-4444-4444-8444-dddddddddddd', name: 'Miro', url: 'https://mcp.miro.com' },
       ],
       'account-2',
       'org-2',

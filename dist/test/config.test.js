@@ -97,3 +97,9 @@ const TOKEN_ENV = { REVA_AUTH_TOKEN: 'auth-token', REVA_AGENT_ID: 'agent-a' };
             process.env.REVA_CLAUDE_JSON_PATH = originalPath;
     }
 });
+(0, node_test_1.test)('modelContext is on by default, and REVA_MODEL_CONTEXT=0/false turns it off', () => {
+    strict_1.default.equal((0, config_1.loadConfig)(TOKEN_ENV).modelContext, true);
+    strict_1.default.equal((0, config_1.loadConfig)({ ...TOKEN_ENV, REVA_MODEL_CONTEXT: '1' }).modelContext, true);
+    strict_1.default.equal((0, config_1.loadConfig)({ ...TOKEN_ENV, REVA_MODEL_CONTEXT: '0' }).modelContext, false);
+    strict_1.default.equal((0, config_1.loadConfig)({ ...TOKEN_ENV, REVA_MODEL_CONTEXT: ' FALSE ' }).modelContext, false);
+});

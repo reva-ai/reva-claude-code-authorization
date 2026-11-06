@@ -11,6 +11,7 @@ const identity_1 = require("./identity");
 const mapping_1 = require("./mapping");
 const rtgClient_1 = require("./rtgClient");
 const runtimeScope_1 = require("./runtimeScope");
+const sessionModel_1 = require("./sessionModel");
 const stdin_1 = require("./stdin");
 const trace_1 = require("./trace");
 const turnCache_1 = require("./turnCache");
@@ -83,6 +84,10 @@ async function main() {
     const serializedInput = JSON.stringify(input.tool_input || {});
     const currentHopContent = mapping.command?.trim() || mapping.pattern?.trim() ||
         (serializedInput !== '{}' ? serializedInput : input.tool_name);
+    // Same model resolution as PreToolUse — see sessionModel.ts. Never throws.
+    const sessionModel = cfg.modelContext
+        ? (0, sessionModel_1.resolveSessionModel)(input.session_id, input.transcript_path, pluginDataDir)
+        : undefined;
     const request = {
         subject: (0, entity_1.directSpecOf)(subjectDescriptor),
         principal: (0, entity_1.directSpecOf)(userDescriptor),
@@ -94,6 +99,7 @@ async function main() {
             activeSessionCount,
             currentSession,
             machineId: (0, deviceId_1.resolveMachineId)(pluginDataDir),
+            model: sessionModel?.model,
         }),
         // userQuery matches PreToolUse; the tool result is transmission.response,
         // not closed Cedar context, so the evaluate payload carries it without a
@@ -101,7 +107,7 @@ async function main() {
         transmission: (0, context_1.buildToolResponseTransmission)(input.tool_response, currentHopContent),
         session: (0, turnCache_1.directSessionFromTurn)(input.session_id, turn),
     };
-    (0, debug_1.debugLog)(`-> post ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}, hops=${hops.length})`);
+    (0, debug_1.debugLog)(`-> post ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}, hops=${hops.length}, model=${sessionModel ? `${sessionModel.model ?? 'unknown'} via ${sessionModel.source}` : 'off'})`);
     const result = await (0, rtgClient_1.evaluate)(cfg, request, traceparent, pluginDataDir, input.session_id);
     (0, debug_1.debugLog)(`<- post decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
     writeDecision(result);

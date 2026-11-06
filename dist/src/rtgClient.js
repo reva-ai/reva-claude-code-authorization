@@ -41,9 +41,9 @@ function errorMessageOf(json) {
 }
 // A 200 with body.guardrails.outcome === "conditional_allow" means the RTG
 // ran synchronous guardrails and wants a human to confirm before proceeding
-// — not a plain allow. Only this one outcome value is handled (confirmed by
-// the user); any other/absent guardrails block still means plain allow, per
-// the existing "200 is authoritative allow" contract.
+// — not a plain allow. Only this one outcome value is handled; any
+// other/absent guardrails block still means plain allow, per the existing
+// "200 is authoritative allow" contract.
 function guardrailsOutcomeOf(json) {
     const guardrails = json != null && typeof json === 'object' && !Array.isArray(json) ? json.guardrails : undefined;
     if (guardrails == null || typeof guardrails !== 'object' || Array.isArray(guardrails))
@@ -96,8 +96,8 @@ async function postToRtg(cfg, request, traceparent, threadId) {
     return postJson(cfg, cfg.rtgUrl, request, traceparent, threadId);
 }
 // Only 401 and 413 fail open here — everything else operational (404, 424,
-// 5xx) now fails CLOSED (an active deny, not a silent pass-through), per
-// explicit instruction: governance must hold even while Reva itself is
+// 5xx) now fails CLOSED (an active deny, not a silent pass-through), by
+// design: governance must hold even while Reva itself is
 // erroring or unreachable, rather than degrade to "no extra governance for
 // that moment." `inactive: true` is therefore only ever set on the 401/413
 // branches below — everything else must reach Claude Code as an explicit
@@ -234,11 +234,10 @@ async function evaluate(cfg, request, traceparent, pluginDataDir, threadId) {
         }
         if (res.status === 403) {
             // Always this fixed message on a policy deny, regardless of whatever
-            // reason RTG's own response carries — per explicit instruction, the
-            // end user sees a consistent, generic notice rather than RTG's
-            // specific policy text. errorType is unaffected: still read from the
-            // response, since that's a separate machine-readable signal, not the
-            // human-facing message this instruction is about.
+            // reason RTG's own response carries — by design, the end user sees a
+            // consistent, generic notice rather than RTG's specific policy text.
+            // errorType is unaffected: still read from the response, since that's
+            // a separate machine-readable signal, not the human-facing message.
             return {
                 decision: 'deny',
                 reason: "Blocked by your organization's security policy.",
