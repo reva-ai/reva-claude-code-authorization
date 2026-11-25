@@ -8,26 +8,7 @@ import {
   osAttribute,
   serializeToolResponse,
 } from '../src/context';
-import { CedarActionMapping, CedarHop, DirectEvalConversationMessage } from '../src/types';
-
-const hops: CedarHop[] = [
-  {
-    seq: 1,
-    subject: { type: 'User', id: 'alice' },
-    action: { name: 'invokeAgent' },
-    resource: { type: 'Agent', id: 'agent-a' },
-    time: '2026-08-19T10:00:00Z',
-  },
-];
-const conversationMessages: DirectEvalConversationMessage[] = [
-  {
-    seq: 1,
-    role: 'user',
-    contentType: 'text/plain',
-    content: 'do the thing',
-    timestamp: '2026-08-19T10:00:00Z',
-  },
-];
+import { CedarActionMapping } from '../src/types';
 
 const CONTEXT_KEYS = [
   'activeSessionCount',
@@ -37,15 +18,15 @@ const CONTEXT_KEYS = [
   'agentType',
   'machineId',
   'os',
-  'hops',
   'timestamp',
 ].sort();
 
-test('invokeAgent context is timestamp + hops + session scalars + agentType — no prompt (RTG-managed, not client-set)', () => {
+test('invokeAgent context is timestamp + session scalars + agentType — no prompt or hops (RTG-owned)', () => {
   const ctx = buildInvokeAgentContext();
   assert.deepEqual(Object.keys(ctx).sort(), CONTEXT_KEYS);
   assert.equal('prompt' in ctx, false);
-  assert.deepEqual(ctx.hops, []);
+  assert.equal('hops' in ctx, false);
+  assert.equal('conversation' in ctx, false);
   assert.equal(ctx.activeSessionCount, 0);
   assert.equal(ctx.sessionId, '');
   assert.equal(ctx.sessionEntryPoint, '');
@@ -62,19 +43,21 @@ test('invokeAgent context carries the current session as flat scalars, plus the 
   assert.equal(ctx.sessionLastSeen, 1000);
 });
 
-test('invokeTool context is timestamp only, no prompt or session', () => {
+test('invokeTool context is timestamp + session scalars only, no prompt or history', () => {
   const mapping: CedarActionMapping = { actionName: 'invokeTool', resourceType: 'Tool', resourceId: 'WebFetch' };
   const ctx = buildActionContext(mapping);
   assert.deepEqual(Object.keys(ctx).sort(), CONTEXT_KEYS);
   assert.equal('prompt' in ctx, false);
   assert.equal('session' in ctx, false);
+  assert.equal('hops' in ctx, false);
+  assert.equal('conversation' in ctx, false);
 });
 
-test('spawn context is scalar policy attributes plus canonical hops, with no nested session record', () => {
+test('spawn context is scalar policy attributes with no nested session or hops', () => {
   const mapping: CedarActionMapping = { actionName: 'spawn', resourceType: 'SubAgent', resourceId: 'Explore' };
-  const ctx = buildActionContext(mapping, { hops });
+  const ctx = buildActionContext(mapping);
   assert.deepEqual(Object.keys(ctx).sort(), [...CONTEXT_KEYS, 'subagentIndex'].sort());
-  assert.deepEqual(ctx.hops, hops);
+  assert.equal('hops' in ctx, false);
   assert.equal('session' in ctx, false);
 });
 
@@ -102,10 +85,11 @@ test('read/write/edit context is timestamp only — no prompt, session, tool, or
     const ctx = buildActionContext(mapping);
     assert.deepEqual(Object.keys(ctx).sort(), CONTEXT_KEYS);
     assert.equal('prompt' in ctx, false);
+    assert.equal('hops' in ctx, false);
   }
 });
 
-test('glob/grep context is timestamp only — no prompt, session, tool, or pattern', () => {
+test('glob/grep context is timestamp + session scalars — no prompt, hops, or conversation', () => {
   for (const actionName of ['glob', 'grep'] as const) {
     const mapping: CedarActionMapping = {
       actionName,
@@ -117,6 +101,8 @@ test('glob/grep context is timestamp only — no prompt, session, tool, or patte
     const ctx = buildActionContext(mapping);
     assert.deepEqual(Object.keys(ctx).sort(), CONTEXT_KEYS);
     assert.equal('prompt' in ctx, false);
+    assert.equal('hops' in ctx, false);
+    assert.equal('conversation' in ctx, false);
   }
 });
 
@@ -222,12 +208,11 @@ test('os is present on every action, using the real current platform', () => {
   assert.equal(buildInvokeAgentContext().os, expected);
 });
 
-test('active-turn evidence uses context.conversation and context.hops with object actions', () => {
+test('evaluate context never includes hops or conversation — RTG owns that history', () => {
   const mapping: CedarActionMapping = { actionName: 'read', resourceType: 'File', resourceId: 'repo/a.ts' };
-  const ctx = buildActionContext(mapping, { hops, conversationMessages });
-  assert.deepEqual(ctx.hops, hops);
-  assert.deepEqual(ctx.conversation, { messages: conversationMessages });
-  assert.deepEqual(ctx.hops[0].action, { name: 'invokeAgent' });
+  const ctx = buildActionContext(mapping);
+  assert.equal('hops' in ctx, false);
+  assert.equal('conversation' in ctx, false);
 });
 
 test('transmission uses canonical dynamic userQuery selector and semantic role', () => {

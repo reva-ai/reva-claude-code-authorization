@@ -76,7 +76,7 @@ function findRepoRoot(startDir: string): string | undefined {
 }
 
 // Cedar policies are authored once against a portable id like
-// "my-repo/utility/notes.md" so the same policy applies no matter
+// "my-repo/src/index.ts" so the same policy applies no matter
 // whose machine or home directory the repo is cloned into — an absolute
 // path like "/Users/alice/repos/my-repo/..." is specific to one
 // person's machine and could never be referenced from a policy meant to
@@ -266,7 +266,7 @@ export function mapToolToCedar(toolName: string, toolInput: Record<string, any>,
 
     // The token here is whatever Claude Code embeds in the tool name, which
     // for a claude.ai connector in the desktop app is a bare uuid
-    // (e.g. mcp__aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa__search_threads).
+    // (mcp__<uuid>__search_threads, for the Gmail connector).
     // Resolve it to the same slug discovery ingests, so the MCPServer parent
     // below points at an entity that actually exists. Fully fault-tolerant
     // inside (see mcpServerIdentity.ts): this runs on the PreToolUse path,

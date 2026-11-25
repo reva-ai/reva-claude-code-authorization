@@ -4,7 +4,6 @@ import { loadConfig } from './config';
 import { debugLog } from './debug';
 import { resolveMachineId } from './deviceId';
 import { buildEntityDescriptor, directSpecOf } from './entity';
-import { loadAgentHops, resolveSubAgentLineage } from './hopChain';
 import { resolveAgentContext, resolveUserEmail } from './identity';
 import { mapToolToCedar } from './mapping';
 import { evaluate } from './rtgClient';
@@ -13,7 +12,7 @@ import { resolveSessionModel } from './sessionModel';
 import { readStdin } from './stdin';
 import { buildSessionContext, deriveSpanId, traceparentHeader } from './trace';
 import { CedarEntityDescriptor, CedarRequest, RtgResult, PostToolUseInput } from './types';
-import { conversationFromTurn, directSessionFromTurn, loadOrStartTurn, resolveTurnTraceId } from './turnCache';
+import { directSessionFromTurn, loadOrStartTurn, resolveTurnTraceId } from './turnCache';
 
 // PostToolUse fires after the tool has already run. An RTG deny cannot undo
 // it; it surfaces as a top-level decision:"block" so Claude sees the reason
@@ -94,10 +93,6 @@ async function main(): Promise<void> {
     mapping.resourceParents,
   );
 
-  const hops = agentCtx.isSubAgent
-    ? resolveSubAgentLineage(input.session_id, agentCtx.subAgentId!, pluginDataDir)
-    : loadAgentHops(input.session_id, pluginDataDir);
-
   // Same current-hop prompt PreToolUse puts in transmission.userQuery.
   const serializedInput = JSON.stringify(input.tool_input || {});
   const currentHopContent =
@@ -115,8 +110,6 @@ async function main(): Promise<void> {
     action: { name: mapping.actionName },
     resource: directSpecOf(resourceDescriptor),
     context: buildActionContext(mapping, {
-      hops,
-      conversationMessages: conversationFromTurn(turn),
       activeSessionCount,
       currentSession,
       machineId: resolveMachineId(pluginDataDir),
@@ -126,11 +119,11 @@ async function main(): Promise<void> {
     // not closed Cedar context, so the evaluate payload carries it without a
     // schema change.
     transmission: buildToolResponseTransmission(input.tool_response, currentHopContent),
-    session: directSessionFromTurn(input.session_id, turn),
+    session: directSessionFromTurn(input.session_id),
   };
 
   debugLog(
-    `-> post ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}, hops=${hops.length}, model=${
+    `-> post ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}, model=${
       sessionModel ? `${sessionModel.model ?? 'unknown'} via ${sessionModel.source}` : 'off'
     })`,
   );

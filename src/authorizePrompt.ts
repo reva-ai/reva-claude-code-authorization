@@ -2,18 +2,24 @@ import { getActiveSessionCount, markSessionActive } from './activeSessions';
 import { loadConfig } from './config';
 import { debugLog } from './debug';
 import { resolveMachineId } from './deviceId';
-import { startTurnHops } from './hopChain';
 import { resolveUserEmail } from './identity';
 import { buildInvokeAgentRequest } from './invokeAgent';
 import { triggerMcpDiscoveryIfDue } from './mcpIngestionTrigger';
+import { readPluginVersionGate } from './pluginVersionGate';
 import { evaluate } from './rtgClient';
 import { skipOutsideCodeScope } from './runtimeScope';
 import { resolveSessionModel } from './sessionModel';
 import { resetSpawnCounter } from './spawnCounter';
 import { readStdin } from './stdin';
 import { buildSessionContext, deriveSpanId, traceparentHeader } from './trace';
-import { CedarHop, RtgResult, UserPromptSubmitInput } from './types';
-import { cleanSubmittedPrompt, directSessionFromTurn, resolveTurnTraceId, startTurn, truncatePrompt } from './turnCache';
+import { RtgResult, UserPromptSubmitInput } from './types';
+import {
+  cleanSubmittedPrompt,
+  directSessionFromTurn,
+  resolveTurnTraceId,
+  startTurn,
+  truncatePrompt,
+} from './turnCache';
 
 // UserPromptSubmit uses a different, binary output schema than PreToolUse
 // (top-level decision:"block" vs hookSpecificOutput.permissionDecision).
@@ -52,6 +58,20 @@ async function main(): Promise<void> {
   const cfg = loadConfig();
   const pluginDataDir = process.env.CLAUDE_PLUGIN_DATA;
 
+  // SessionStart latches an outdated plugin. Block the turn here (decision:
+  // block) before evaluate so the model never runs on a version-blocked
+  // session.
+  const versionGate = readPluginVersionGate(input.session_id, pluginDataDir);
+  if (versionGate.status === 'blocked') {
+    debugLog(`UserPromptSubmit: plugin version blocked — ${versionGate.reason}`);
+    writeDecision({
+      decision: 'deny',
+      reason: versionGate.reason,
+      errorType: versionGate.errorType,
+      status: 403,
+    });
+  }
+
   // Closes the gap between SessionStart's once-per-session discovery pass
   // and a connector added mid-session: UserPromptSubmit fires every turn,
   // so re-checking here (throttled to ~15 minutes, see
@@ -60,8 +80,8 @@ async function main(): Promise<void> {
   triggerMcpDiscoveryIfDue(input.cwd, pluginDataDir);
 
   const userEmail = resolveUserEmail();
-  // One cleaned prompt for both the invokeAgent request and the turn cache, so
-  // this turn's tool calls carry the same conversation text the RTG saw here.
+  // The cleaned prompt goes to Reva as the invokeAgent userQuery and nowhere
+  // else: it is not kept on this machine.
   const submittedPrompt = input.prompt ? cleanSubmittedPrompt(input.prompt) : '';
   const prompt = submittedPrompt ? truncatePrompt(submittedPrompt) : '';
 
@@ -75,11 +95,11 @@ async function main(): Promise<void> {
   );
   const activeSessionCount = getActiveSessionCount(cfg.agentId, pluginDataDir);
 
-  // This plugin owns the turn boundary itself: mint a fresh span id here
-  // and persist it (with the prompt text) so every PreToolUse call this
-  // turn produces — separate, stateless hook processes — reads the same
-  // value back instead of each rolling its own.
-  const turn = startTurn(input.session_id, submittedPrompt, pluginDataDir);
+  // This plugin owns the turn boundary itself: mint a fresh trace id here
+  // and persist it (id and turn number only, no prompt text) so every
+  // PreToolUse call this turn produces — separate, stateless hook
+  // processes — reads the same value back instead of each rolling its own.
+  const turn = startTurn(input.session_id, pluginDataDir);
   // Same turn boundary resets the subagent spawn counter — each turn's
   // first spawn is #1 again, not a continuation of every prior turn's
   // count (see spawnCounter.ts's own comment on why).
@@ -101,7 +121,7 @@ async function main(): Promise<void> {
     userEmail,
     cfg.agentId,
     prompt,
-    directSessionFromTurn(input.session_id, turn),
+    directSessionFromTurn(input.session_id),
     activeSessionCount,
     currentSession,
     resolveMachineId(pluginDataDir),
@@ -116,18 +136,8 @@ async function main(): Promise<void> {
   const result = await evaluate(cfg, request, traceparent, pluginDataDir, input.session_id);
   debugLog(`<- decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
 
-  // Record this invokeAgent as the base of this turn's hop chain regardless
-  // of the decision, so a subsequent tool call (if the turn proceeds) has
-  // it to build on — mirrors how the spawn counter also advances on every
-  // attempt, not just approved ones.
-  const invokeAgentHop: CedarHop = {
-    seq: 1,
-    subject: request.subject,
-    action: { name: 'invokeAgent' },
-    resource: request.resource,
-    time: new Date().toISOString(),
-  };
-  startTurnHops(input.session_id, invokeAgentHop, pluginDataDir);
+  // Hops are recorded by RTG from evaluate — do not persist a local hop chain
+  // under CLAUDE_PLUGIN_DATA (that used to write hops/*.json on the machine).
 
   writeDecision(result);
 }

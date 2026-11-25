@@ -18,7 +18,7 @@ async function main() {
     // else loadConfig() requires) to succeed first.
     const agentId = process.env.REVA_AGENT_ID || (0, deviceId_1.resolveAgentId)();
     if (!agentId) {
-        (0, debug_1.debugLog)('sessionEnd: skipped — no Anthropic account logged in and REVA_AGENT_ID not set');
+        (0, debug_1.debugLog)('sessionEnd: skipped active-session cleanup — no Anthropic account logged in and REVA_AGENT_ID not set');
     }
     else {
         try {

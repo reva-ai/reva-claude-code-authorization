@@ -6,7 +6,6 @@ const config_1 = require("./config");
 const debug_1 = require("./debug");
 const deviceId_1 = require("./deviceId");
 const entity_1 = require("./entity");
-const hopChain_1 = require("./hopChain");
 const identity_1 = require("./identity");
 const mapping_1 = require("./mapping");
 const rtgClient_1 = require("./rtgClient");
@@ -77,9 +76,6 @@ async function main() {
         })
         : (0, entity_1.buildEntityDescriptor)('Agent', agentCtx.agentId);
     const resourceDescriptor = (0, entity_1.buildEntityDescriptor)(mapping.resourceType, mapping.resourceId, mapping.resourceProperties, mapping.resourceParents);
-    const hops = agentCtx.isSubAgent
-        ? (0, hopChain_1.resolveSubAgentLineage)(input.session_id, agentCtx.subAgentId, pluginDataDir)
-        : (0, hopChain_1.loadAgentHops)(input.session_id, pluginDataDir);
     // Same current-hop prompt PreToolUse puts in transmission.userQuery.
     const serializedInput = JSON.stringify(input.tool_input || {});
     const currentHopContent = mapping.command?.trim() || mapping.pattern?.trim() ||
@@ -94,8 +90,6 @@ async function main() {
         action: { name: mapping.actionName },
         resource: (0, entity_1.directSpecOf)(resourceDescriptor),
         context: (0, context_1.buildActionContext)(mapping, {
-            hops,
-            conversationMessages: (0, turnCache_1.conversationFromTurn)(turn),
             activeSessionCount,
             currentSession,
             machineId: (0, deviceId_1.resolveMachineId)(pluginDataDir),
@@ -105,9 +99,9 @@ async function main() {
         // not closed Cedar context, so the evaluate payload carries it without a
         // schema change.
         transmission: (0, context_1.buildToolResponseTransmission)(input.tool_response, currentHopContent),
-        session: (0, turnCache_1.directSessionFromTurn)(input.session_id, turn),
+        session: (0, turnCache_1.directSessionFromTurn)(input.session_id),
     };
-    (0, debug_1.debugLog)(`-> post ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}, hops=${hops.length}, model=${sessionModel ? `${sessionModel.model ?? 'unknown'} via ${sessionModel.source}` : 'off'})`);
+    (0, debug_1.debugLog)(`-> post ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}, model=${sessionModel ? `${sessionModel.model ?? 'unknown'} via ${sessionModel.source}` : 'off'})`);
     const result = await (0, rtgClient_1.evaluate)(cfg, request, traceparent, pluginDataDir, input.session_id);
     (0, debug_1.debugLog)(`<- post decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
     writeDecision(result);

@@ -17,6 +17,8 @@ async function withTempDir(fn: (dir: string) => Promise<void>): Promise<void> {
 
 const baseCfg: RevaConfig = {
   rtgUrl: 'https://rtg.test/rtg/v2/ai/evaluation',
+  pluginVersionUrl: 'https://rtg.test/pdp/ai/access/ai/plugin/version',
+  summarizeUrl: 'https://rtg.test/pdp/ai/access/v1/ai/trace/summarize',
   authorization: 'test-token',
   agentId: 'agent-a',
   timeoutMs: 1000,
@@ -32,16 +34,6 @@ const baseRequest: CedarRequest = {
   resource: { type: 'Tool', id: 'WebFetch', properties: { name: 'WebFetch' } },
   context: {
     timestamp: 1,
-    prompt: 'find docs',
-    hops: [
-      {
-        seq: 1,
-        subject: { type: 'User', id: 'alice@example.com' },
-        action: { name: 'invokeAgent' },
-        resource: { type: 'Agent', id: 'agent-a' },
-        time: '2026-08-19T10:00:00Z',
-      },
-    ],
   },
   transmission: {
     promptKey: 'userQuery',
@@ -49,7 +41,7 @@ const baseRequest: CedarRequest = {
     role: 'assistant',
     contentType: 'text/plain',
   },
-  session: { id: 'sess-1', turn: 1, startedAt: '2026-08-19T10:00:00Z' },
+  session: { id: 'sess-1' },
 };
 
 async function withFetch<T>(impl: typeof fetch, fn: () => Promise<T>): Promise<T> {
@@ -361,9 +353,11 @@ test('request uses canonical body and raw X-API-Token header', async () => {
   assert.equal(headers?.['X-Reva-Verification-Codes'], 'CODE_USER_SCOPE');
   assert.equal(headers?.Authorization, undefined);
   assert.equal(body.transmission.promptKey, 'userQuery');
-  assert.deepEqual(body.context.hops[0].action, { name: 'invokeAgent' });
+  assert.equal('hops' in body.context, false);
+  assert.equal('conversation' in body.context, false);
   assert.deepEqual(body.session, baseRequest.session);
   assert.equal('messages' in body.session, false);
+  assert.equal('turn' in body.session, false);
   assert.equal('entities' in body, false);
   assert.equal('hops' in body, false);
 });

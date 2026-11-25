@@ -41,15 +41,6 @@ exports.serializeToolResponse = serializeToolResponse;
 exports.buildToolResponseTransmission = buildToolResponseTransmission;
 const nodeOs = __importStar(require("node:os"));
 const ingestionClient_1 = require("./ingestionClient");
-function activeTurnEvidence(extras) {
-    const messages = extras.conversationMessages || [];
-    return {
-        // Canonical direct-AI placement. An empty array is meaningful for the
-        // first hop of a turn and keeps every request on one stable shape.
-        hops: extras.hops || [],
-        ...(messages.length > 0 ? { conversation: { messages } } : {}),
-    };
-}
 // Exported (with an injectable platform, defaulting to the real one) so
 // tests can cover the mapping directly without mocking node:os — same
 // pattern config.ts's loadConfig(env = process.env) uses.
@@ -74,27 +65,26 @@ function activeSessionFields(extras) {
 }
 function buildActionContext(mapping, extras = {}) {
     const timestamp = Date.now();
-    const evidence = activeTurnEvidence(extras);
     const sessions = activeSessionFields(extras);
     switch (mapping.actionName) {
         case 'invokeTool':
-            return { timestamp, ...evidence, ...sessions };
+            return { timestamp, ...sessions };
         case 'spawn':
-            return { timestamp, subagentIndex: extras.subagentIndex ?? 1, ...evidence, ...sessions };
+            return { timestamp, subagentIndex: extras.subagentIndex ?? 1, ...sessions };
         case 'executeBash':
-            return { timestamp, command: mapping.command ?? '', ...evidence, ...sessions };
+            return { timestamp, command: mapping.command ?? '', ...sessions };
         case 'read':
         case 'write':
         case 'edit':
         case 'glob':
         case 'grep':
-            return { timestamp, ...evidence, ...sessions };
+            return { timestamp, ...sessions };
         default:
-            return { timestamp, ...evidence, ...sessions };
+            return { timestamp, ...sessions };
     }
 }
 function buildInvokeAgentContext(activeSessionCount = 0, currentSession, machineId, model) {
-    return { timestamp: Date.now(), hops: [], ...activeSessionFields({ activeSessionCount, currentSession, machineId, model }) };
+    return { timestamp: Date.now(), ...activeSessionFields({ activeSessionCount, currentSession, machineId, model }) };
 }
 // `role`/`contentType`/`promptKey` are constants here — Claude Code doesn't
 // expose a multi-role or multi-content-type concept at the hook level, only

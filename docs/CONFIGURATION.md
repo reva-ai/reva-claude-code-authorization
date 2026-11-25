@@ -17,9 +17,9 @@ without reinstalling.
 | `REVA_DEBUG` | no | off | Set to `1` to log each decision and payload detail to stderr, and to append the same lines, timestamped, to `debug.log` in the plugin's data directory — stderr alone is not readable when the Desktop app runs the hook. |
 | `REVA_PDP_TIMEOUT_MS` | no | `25000` | Timeout for an evaluation call. On timeout the plugin fails **closed** — the action is blocked. |
 | `REVA_INGESTION_TIMEOUT_MS` | no | `5000` | Timeout for session-start ingestion. Deliberately much shorter — ingestion is best-effort and never gates an action. |
-| `REVA_MODEL_CONTEXT` | no | on | The Claude model the session is running on is sent to Reva as `context.model` on every evaluation request, and left out when it cannot be determined. Set to `0` or `false` to stop sending it, for a tenant that strictly validates request context against a schema without `model`. |
+| `REVA_MODEL_CONTEXT` | no | on | Set to `0` or `false` to stop sending the Claude model name with each request. On by default; turn it off if your deployment strictly validates request context. |
 | `REVA_CLAUDE_JSON_PATH` | no | `~/.claude.json` | Overrides where the plugin reads your Anthropic account identity from. Intended for tests. |
-| `REVA_CLAUDE_SESSIONS_DIR` | no | `~/Library/Application Support/Claude/claude-code-sessions` | Overrides where the plugin reads the Claude desktop app's session files from, to resolve MCP server identity. Intended for tests. |
+| `REVA_CLAUDE_SESSIONS_DIR` | no | `~/Library/Application Support/Claude/claude-code-sessions` | Overrides where MCP server identity is resolved from. Intended for tests. |
 | `REVA_SESSION_CWD` | no | the hook's own cwd | Set by the plugin when it spawns its detached MCP-discovery child, which has no inherited working directory. Not intended to be set by hand. |
 | `REVA_INVOKED_MCP_SERVER` | no | — | Set by the plugin on that same child to name the MCP server whose invocation triggered the ingestion. Not intended to be set by hand. |
 
@@ -48,7 +48,7 @@ matching entity exists in your Reva tenant.
 `REVA_HOST` accepts a bare host (`api.example.reva.ai`) or one with a scheme, which is
 stripped. Trailing slashes are removed. Paths are fixed in code:
 
-- evaluation: `/pdp/v2/ai/evaluation`
+- evaluation: `/pdp/ai/access/v1/ai/evaluation`
 - ingestion: `/ingestion/v2`
 
 The scheme is **HTTPS for every host** except `localhost`, `127.0.0.1` and `[::1]`, which

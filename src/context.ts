@@ -1,18 +1,19 @@
 import * as nodeOs from 'node:os';
 import { ActiveSession } from './activeSessions';
 import { AGENT_TYPE } from './ingestionClient';
-import {
-  CedarActionMapping,
-  CedarHop,
-  DirectEvalConversationMessage,
-  DirectEvalTransmission,
-} from './types';
+import { CedarActionMapping, DirectEvalTransmission } from './types';
 
 // The CodingAgent Cedar schema declares a DIFFERENT context shape per
 // action — Cedar treats context records as closed, so sending an attribute
 // an action doesn't declare is a schema violation, not a harmless extra
-// field. The direct-AI endpoint projects `conversation` and `hops` out as
-// active-turn evidence before validating the remaining managed context.
+// field.
+//
+// RTG owns thread history for guardrail evaluators (earlier hops of this
+// trace and earlier prompts of the thread). Do not send `context.hops`,
+// `context.conversation`, or `session.messages`: if the caller supplies
+// those, RTG keeps them and will not attach what it recorded. Do not
+// persist hops under CLAUDE_PLUGIN_DATA either — that was local-only and
+// is obsolete now that RTG records hops.
 //
 // `prompt` is deliberately NOT sent in `context` — the RTG now manages
 // that field itself (derived server-side from `transmission`) and rejects
@@ -24,13 +25,14 @@ import {
 // milliseconds UTC, a Long — Date.now() already is exactly this, no
 // timezone handling needed) is unaffected and still sent on every action.
 //
-// NOTE: `timestamp` is sent on every action, so the schema must declare it
-// for each of them (invokeAgent/invokeTool/spawn/executeBash/read/write/
-// edit/glob/grep). Sending it on an action whose schema does not is exactly
-// the kind of closed-context violation this file exists to avoid.
+// NOTE: `timestamp` is sent on every action below, so every action's schema
+// must declare it (spawn/executeBash/read/write/edit/glob/grep as well as
+// invokeAgent/invokeTool/invokeModel). Sending it on an action whose schema
+// does not declare it is exactly the kind of closed-context violation this
+// file exists to avoid.
 //
-// Current shape per action:
-//   invokeAgent:          { timestamp (required), hops: [] }
+// Current shape per action (Cedar policy scalars only):
+//   invokeAgent:          { timestamp (required) }
 //   invokeTool:           { timestamp (required) }
 //   spawn:                { timestamp, subagentIndex (required) }
 //   executeBash:          { timestamp, command (required, real shell string) }
@@ -61,11 +63,10 @@ import {
 // which model made the call. Omitted entirely when unknown, never sent as a
 // placeholder.
 //
-// os is also sent on every action — "Linux", "Windows", or "macOS": all
-// three reported distinctly rather than folding macOS into "Linux" as an
-// earlier version of this file did (on the reasoning that both share the
-// same POSIX shell dialect — true for command syntax, but not what's wanted
-// here).
+// os is also sent on every action — "Linux", "Windows", or "macOS", all
+// three reported distinctly rather than folding macOS into "Linux" (both
+// share the same POSIX shell dialect — true for command syntax, but not
+// what's wanted here).
 //
 // machineId is also sent on every action — this machine's own id (see
 // deviceId.ts's resolveMachineId), the same value PATCH-ADDed to
@@ -78,11 +79,6 @@ export interface ActionContextExtras {
   // Cumulative count of subagents spawned so far this session (1 = first
   // spawn) — only meaningful for, and only sent on, the spawn action.
   subagentIndex?: number;
-  // Completed lineage before the current action. Top-level
-  // subject/action/resource/transmission describe the current action, so it
-  // must not be duplicated here.
-  hops?: CedarHop[];
-  conversationMessages?: DirectEvalConversationMessage[];
   // How many sessions are currently active on this machine, including the
   // one making this very request — so 1 means nothing else is running
   // right now. Local-only: no visibility into other machines, even ones
@@ -99,16 +95,6 @@ export interface ActionContextExtras {
   // already gated by RevaConfig.modelContext at the call site. Sent as
   // context.model only when a real value was resolved — never a placeholder.
   model?: string;
-}
-
-function activeTurnEvidence(extras: ActionContextExtras): Record<string, any> {
-  const messages = extras.conversationMessages || [];
-  return {
-    // Canonical direct-AI placement. An empty array is meaningful for the
-    // first hop of a turn and keeps every request on one stable shape.
-    hops: extras.hops || [],
-    ...(messages.length > 0 ? { conversation: { messages } } : {}),
-  };
 }
 
 // Exported (with an injectable platform, defaulting to the real one) so
@@ -138,23 +124,22 @@ export function buildActionContext(
   extras: ActionContextExtras = {},
 ): Record<string, any> {
   const timestamp = Date.now();
-  const evidence = activeTurnEvidence(extras);
   const sessions = activeSessionFields(extras);
   switch (mapping.actionName) {
     case 'invokeTool':
-      return { timestamp, ...evidence, ...sessions };
+      return { timestamp, ...sessions };
     case 'spawn':
-      return { timestamp, subagentIndex: extras.subagentIndex ?? 1, ...evidence, ...sessions };
+      return { timestamp, subagentIndex: extras.subagentIndex ?? 1, ...sessions };
     case 'executeBash':
-      return { timestamp, command: mapping.command ?? '', ...evidence, ...sessions };
+      return { timestamp, command: mapping.command ?? '', ...sessions };
     case 'read':
     case 'write':
     case 'edit':
     case 'glob':
     case 'grep':
-      return { timestamp, ...evidence, ...sessions };
+      return { timestamp, ...sessions };
     default:
-      return { timestamp, ...evidence, ...sessions };
+      return { timestamp, ...sessions };
   }
 }
 
@@ -164,7 +149,7 @@ export function buildInvokeAgentContext(
   machineId?: string,
   model?: string,
 ): Record<string, any> {
-  return { timestamp: Date.now(), hops: [], ...activeSessionFields({ activeSessionCount, currentSession, machineId, model }) };
+  return { timestamp: Date.now(), ...activeSessionFields({ activeSessionCount, currentSession, machineId, model }) };
 }
 
 // `role`/`contentType`/`promptKey` are constants here — Claude Code doesn't

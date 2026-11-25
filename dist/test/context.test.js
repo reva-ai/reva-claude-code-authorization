@@ -6,24 +6,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const strict_1 = __importDefault(require("node:assert/strict"));
 const node_test_1 = require("node:test");
 const context_1 = require("../src/context");
-const hops = [
-    {
-        seq: 1,
-        subject: { type: 'User', id: 'alice' },
-        action: { name: 'invokeAgent' },
-        resource: { type: 'Agent', id: 'agent-a' },
-        time: '2026-08-19T10:00:00Z',
-    },
-];
-const conversationMessages = [
-    {
-        seq: 1,
-        role: 'user',
-        contentType: 'text/plain',
-        content: 'do the thing',
-        timestamp: '2026-08-19T10:00:00Z',
-    },
-];
 const CONTEXT_KEYS = [
     'activeSessionCount',
     'sessionId',
@@ -32,14 +14,14 @@ const CONTEXT_KEYS = [
     'agentType',
     'machineId',
     'os',
-    'hops',
     'timestamp',
 ].sort();
-(0, node_test_1.test)('invokeAgent context is timestamp + hops + session scalars + agentType — no prompt (RTG-managed, not client-set)', () => {
+(0, node_test_1.test)('invokeAgent context is timestamp + session scalars + agentType — no prompt or hops (RTG-owned)', () => {
     const ctx = (0, context_1.buildInvokeAgentContext)();
     strict_1.default.deepEqual(Object.keys(ctx).sort(), CONTEXT_KEYS);
     strict_1.default.equal('prompt' in ctx, false);
-    strict_1.default.deepEqual(ctx.hops, []);
+    strict_1.default.equal('hops' in ctx, false);
+    strict_1.default.equal('conversation' in ctx, false);
     strict_1.default.equal(ctx.activeSessionCount, 0);
     strict_1.default.equal(ctx.sessionId, '');
     strict_1.default.equal(ctx.sessionEntryPoint, '');
@@ -54,18 +36,20 @@ const CONTEXT_KEYS = [
     strict_1.default.equal(ctx.sessionEntryPoint, 'cli');
     strict_1.default.equal(ctx.sessionLastSeen, 1000);
 });
-(0, node_test_1.test)('invokeTool context is timestamp only, no prompt or session', () => {
+(0, node_test_1.test)('invokeTool context is timestamp + session scalars only, no prompt or history', () => {
     const mapping = { actionName: 'invokeTool', resourceType: 'Tool', resourceId: 'WebFetch' };
     const ctx = (0, context_1.buildActionContext)(mapping);
     strict_1.default.deepEqual(Object.keys(ctx).sort(), CONTEXT_KEYS);
     strict_1.default.equal('prompt' in ctx, false);
     strict_1.default.equal('session' in ctx, false);
+    strict_1.default.equal('hops' in ctx, false);
+    strict_1.default.equal('conversation' in ctx, false);
 });
-(0, node_test_1.test)('spawn context is scalar policy attributes plus canonical hops, with no nested session record', () => {
+(0, node_test_1.test)('spawn context is scalar policy attributes with no nested session or hops', () => {
     const mapping = { actionName: 'spawn', resourceType: 'SubAgent', resourceId: 'Explore' };
-    const ctx = (0, context_1.buildActionContext)(mapping, { hops });
+    const ctx = (0, context_1.buildActionContext)(mapping);
     strict_1.default.deepEqual(Object.keys(ctx).sort(), [...CONTEXT_KEYS, 'subagentIndex'].sort());
-    strict_1.default.deepEqual(ctx.hops, hops);
+    strict_1.default.equal('hops' in ctx, false);
     strict_1.default.equal('session' in ctx, false);
 });
 (0, node_test_1.test)('executeBash context has scalar action attributes and no managed context record', () => {
@@ -91,9 +75,10 @@ const CONTEXT_KEYS = [
         const ctx = (0, context_1.buildActionContext)(mapping);
         strict_1.default.deepEqual(Object.keys(ctx).sort(), CONTEXT_KEYS);
         strict_1.default.equal('prompt' in ctx, false);
+        strict_1.default.equal('hops' in ctx, false);
     }
 });
-(0, node_test_1.test)('glob/grep context is timestamp only — no prompt, session, tool, or pattern', () => {
+(0, node_test_1.test)('glob/grep context is timestamp + session scalars — no prompt, hops, or conversation', () => {
     for (const actionName of ['glob', 'grep']) {
         const mapping = {
             actionName,
@@ -105,6 +90,8 @@ const CONTEXT_KEYS = [
         const ctx = (0, context_1.buildActionContext)(mapping);
         strict_1.default.deepEqual(Object.keys(ctx).sort(), CONTEXT_KEYS);
         strict_1.default.equal('prompt' in ctx, false);
+        strict_1.default.equal('hops' in ctx, false);
+        strict_1.default.equal('conversation' in ctx, false);
     }
 });
 (0, node_test_1.test)('buildActionContext carries the current session as flat scalars, plus the aggregate count, on every action', () => {
@@ -196,12 +183,11 @@ const CONTEXT_KEYS = [
     strict_1.default.equal((0, context_1.buildActionContext)(mapping).os, expected);
     strict_1.default.equal((0, context_1.buildInvokeAgentContext)().os, expected);
 });
-(0, node_test_1.test)('active-turn evidence uses context.conversation and context.hops with object actions', () => {
+(0, node_test_1.test)('evaluate context never includes hops or conversation — RTG owns that history', () => {
     const mapping = { actionName: 'read', resourceType: 'File', resourceId: 'repo/a.ts' };
-    const ctx = (0, context_1.buildActionContext)(mapping, { hops, conversationMessages });
-    strict_1.default.deepEqual(ctx.hops, hops);
-    strict_1.default.deepEqual(ctx.conversation, { messages: conversationMessages });
-    strict_1.default.deepEqual(ctx.hops[0].action, { name: 'invokeAgent' });
+    const ctx = (0, context_1.buildActionContext)(mapping);
+    strict_1.default.equal('hops' in ctx, false);
+    strict_1.default.equal('conversation' in ctx, false);
 });
 (0, node_test_1.test)('transmission uses canonical dynamic userQuery selector and semantic role', () => {
     strict_1.default.deepEqual((0, context_1.buildTransmission)('run tests', 'assistant'), {

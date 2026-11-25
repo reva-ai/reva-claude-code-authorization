@@ -12,7 +12,7 @@ const TOKEN_ENV = { REVA_AUTH_TOKEN: 'auth-token', REVA_AGENT_ID: 'agent-a' };
 
 test('uses the default auth host when REVA_HOST is unset', () => {
   const cfg = loadConfig(TOKEN_ENV);
-  assert.equal(cfg.rtgUrl, `https://${DEFAULT_HOST}/pdp/v2/ai/evaluation`);
+  assert.equal(cfg.rtgUrl, `https://${DEFAULT_HOST}/pdp/ai/access/v1/ai/evaluation`);
   assert.equal(cfg.ingestionUrl, `https://${DEFAULT_HOST}/ingestion/v2`);
 });
 
@@ -21,7 +21,10 @@ test('REVA_HOST overrides the default host', () => {
     ...TOKEN_ENV,
     REVA_HOST: 'localhost:8787',
   });
-  assert.equal(cfg.rtgUrl, 'http://localhost:8787/pdp/v2/ai/evaluation');
+  // Local host uses http; paths are always the gateway aliases.
+  assert.equal(cfg.rtgUrl, 'http://localhost:8787/pdp/ai/access/v1/ai/evaluation');
+  assert.equal(cfg.pluginVersionUrl, 'http://localhost:8787/pdp/ai/access/ai/plugin/version');
+  assert.equal(cfg.summarizeUrl, 'http://localhost:8787/pdp/ai/access/v1/ai/trace/summarize');
   assert.equal(cfg.ingestionUrl, 'http://localhost:8787/ingestion/v2');
 });
 
@@ -41,7 +44,7 @@ test('reads token from CLAUDE_PLUGIN_OPTION_* when no REVA_AUTH_TOKEN is set', (
     CLAUDE_PLUGIN_OPTION_AUTH_TOKEN: 'from-option-auth',
   });
   assert.equal(cfg.authorization, 'from-option-auth');
-  assert.equal(cfg.rtgUrl, `https://${DEFAULT_HOST}/pdp/v2/ai/evaluation`);
+  assert.equal(cfg.rtgUrl, `https://${DEFAULT_HOST}/pdp/ai/access/v1/ai/evaluation`);
 });
 
 test('an explicit REVA_* var wins over the CLAUDE_PLUGIN_OPTION_* one when both are set', () => {
@@ -52,21 +55,12 @@ test('an explicit REVA_* var wins over the CLAUDE_PLUGIN_OPTION_* one when both 
   assert.equal(cfg.authorization, 'auth-token');
 });
 
-test('REVA_HOST uses https for non-local hosts', () => {
-  const cfg = loadConfig({
-    ...TOKEN_ENV,
-    REVA_HOST: 'api.tenant.example.com',
-  });
-  assert.equal(cfg.rtgUrl, 'https://api.tenant.example.com/pdp/v2/ai/evaluation');
-  assert.equal(cfg.ingestionUrl, 'https://api.tenant.example.com/ingestion/v2');
-});
-
 test('host comes from the install-dialog option when REVA_HOST is absent', () => {
   const cfg = loadConfig({
     ...TOKEN_ENV,
     CLAUDE_PLUGIN_OPTION_HOST: 'api.example.reva.ai',
   });
-  assert.equal(cfg.rtgUrl, 'https://api.example.reva.ai/pdp/v2/ai/evaluation');
+  assert.equal(cfg.rtgUrl, 'https://api.example.reva.ai/pdp/ai/access/v1/ai/evaluation');
 });
 
 test('REVA_HOST takes priority over the install-dialog option', () => {
@@ -75,7 +69,16 @@ test('REVA_HOST takes priority over the install-dialog option', () => {
     REVA_HOST: 'api.example.reva.ai',
     CLAUDE_PLUGIN_OPTION_HOST: 'ignored.example.com',
   });
-  assert.equal(cfg.rtgUrl, 'https://api.example.reva.ai/pdp/v2/ai/evaluation');
+  assert.equal(cfg.rtgUrl, 'https://api.example.reva.ai/pdp/ai/access/v1/ai/evaluation');
+});
+
+test('REVA_HOST uses https for non-local hosts', () => {
+  const cfg = loadConfig({
+    ...TOKEN_ENV,
+    REVA_HOST: 'api.tenant.example.com',
+  });
+  assert.equal(cfg.rtgUrl, 'https://api.tenant.example.com/pdp/ai/access/v1/ai/evaluation');
+  assert.equal(cfg.ingestionUrl, 'https://api.tenant.example.com/ingestion/v2');
 });
 
 test('timeouts still have working defaults — not part of the required/error-if-missing set', () => {

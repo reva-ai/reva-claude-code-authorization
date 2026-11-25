@@ -1,5 +1,10 @@
 export interface RevaConfig {
   rtgUrl: string;
+  // GET the minimum supported / current version window for coding-agent
+  // plugin protocol versioning.
+  pluginVersionUrl: string;
+  // POST closes one prompt trace after the turn finishes (hops → summary).
+  summarizeUrl: string;
   // Sent as the X-API-Token header on BOTH evaluation and ingestion calls —
   // one Reva auth token authenticates everything this plugin does.
   authorization: string;
@@ -20,9 +25,9 @@ export interface RevaConfig {
   ingestionTimeoutMs: number;
   // When true (the default), every action's context also carries `model` —
   // the Claude model this session is running on (see sessionModel.ts), so
-  // each decision log records which model made the call. REVA_MODEL_CONTEXT=0
-  // or false turns it off for a deployment that strictly validates context
-  // against a schema without `model`.
+  // each decision log records which model made the call.
+  // REVA_MODEL_CONTEXT=0/false turns it off for a deployment that strictly
+  // validates context against a schema without `model`.
   modelContext: boolean;
 }
 
@@ -90,7 +95,8 @@ export interface CedarEntityDescriptor {
 }
 
 // One step in the delegation chain leading up to (but not including) the
-// current request's own action — see hopChain.ts for how this is tracked
+// current request's own action. Local hop chains are no longer persisted;
+  // RTG records hops from evaluate.
 // across the stateless per-hook-call processes.
 export interface CedarHop {
   seq: number;
@@ -98,14 +104,6 @@ export interface CedarHop {
   action: { name: string };
   resource: CedarEntityRef;
   time: string;
-}
-
-export interface DirectEvalConversationMessage {
-  seq: number;
-  role: 'user' | 'assistant' | 'tool';
-  contentType: string;
-  content: string;
-  timestamp: string;
 }
 
 export interface DirectEvalTransmission {
@@ -119,14 +117,11 @@ export interface DirectEvalTransmission {
   response?: string;
 }
 
-// Metadata-only sessions are explicitly supported by the RTG. The plugin
-// deliberately omits `messages`: its current hooks do not observe a reliable
-// final assistant response for every completed turn, so adding history would
-// fabricate evidence or create invalid request/response pairs.
+// Thread id only. RTG owns turn numbers and prior-prompt session.messages for
+// guardrail evaluators; sending those (or context.hops / conversation) would
+// block RTG from attaching what it recorded.
 export interface DirectEvalSession {
   id: string;
-  turn: number;
-  startedAt: string;
 }
 
 export interface CedarRequest {

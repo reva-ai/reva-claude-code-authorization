@@ -16,6 +16,8 @@ import { RevaConfig } from '../src/types';
 
 const baseCfg: RevaConfig = {
   rtgUrl: 'https://rtg.test/evaluate',
+  pluginVersionUrl: 'https://rtg.test/pdp/ai/access/ai/plugin/version',
+  summarizeUrl: 'https://rtg.test/pdp/ai/access/v1/ai/trace/summarize',
   authorization: 'eval-token',
   agentId: 'aa-bb-cc-dd-ee-ff',
   timeoutMs: 1000,
@@ -39,9 +41,8 @@ function withTempDir(fn: (dir: string) => void | Promise<void>): Promise<void> {
   return Promise.resolve(fn(dir)).finally(() => fs.rmSync(dir, { recursive: true, force: true }));
 }
 
-// Matches a real entity-types response — every entity type shares
-// schemaName "CodingAgent" (the single Cedar namespace), not an
-// "Identity"/"AgenticAI" split.
+// Matches a real entity-types response — every
+// entity type shares schemaName "CodingAgent" (the single Cedar namespace).
 // resolveEntityTypeIds matches by `name` alone (see its own comment), so
 // schemaName here is just realistic fixture data, not something asserted
 // on. The unrelated "SubAgent" entry confirms matching-by-name doesn't grab
@@ -307,8 +308,8 @@ test('ingestUser: a POST failing with "Entity type not found" resets the whole l
       () => ingestUser(baseCfg, 'stale-user-id', 'alice@example.com', 'machine-123', 'agent-abc', dir),
     );
 
-    // A policy-store migration that reassigns entity-type ids can also
-    // leave the real entities empty under the new ones, so
+    // A policy-store migration that reassigns entity-type
+    // ids can also leave the real entities empty under the new ones, so
     // knownMcpServerNames is just as stale as the ids themselves — a
     // server marked "known" here may not actually be registered anymore.
     const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
@@ -320,9 +321,9 @@ test('ingestUser: a POST failing with "Entity type not found" resets the whole l
   });
 });
 
-// This is the actual recovery behavior: not just "the cache gets cleared
-// for next time" (the test above), but a successful retry within this SAME
-// call, once a fresh id is available.
+// This is the actual recovery behavior: not just "the cache
+// gets cleared for next time" (the test above), but a successful retry
+// within this SAME call, once a fresh id is available.
 test('ingestUser: a POST failing with "Entity type not found" retries once, within the same call, using a freshly-resolved id', async () => {
   await withTempDir(async (dir) => {
     fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
@@ -704,8 +705,8 @@ test('ingestDiscoveredMcpServers: a failed bulk POST holds back known-marking fo
   });
 });
 
-// This is the actual failure mode: a policy-store/tenant
-// migration reassigns entity-type ids server-side, the plugin's cache still
+// This is the actual failure mode: a server-side
+// migration reassigns entity-type ids, the plugin's cache still
 // holds the old ones, and every ingestion call starts failing with this
 // exact 404 shape until something invalidates the cache.
 test('ingestDiscoveredMcpServers: a bulk PATCH failing with "Entity type not found" invalidates the cached entity-type ids', async () => {
@@ -950,8 +951,8 @@ test('ingestDiscoveredMcpServers PATCHes registeredMcpServers per name on the SI
     );
 
     // One PATCH per name, on /entity/{entityId} — NOT /entity/bulk. The bulk
-    // endpoint does not honour op:"ADD" as a Set append: several ADD ops
-    // in one request leave the attribute holding one value.
+    // endpoint does not honour op:"ADD" as a Set append:
+    // several ADD ops in one request leave the attribute holding one value.
     const patches = calls.filter((c) => c.method === 'PATCH');
     assert.equal(patches.length, 1);
     assert.ok(patches[0].url.includes('/entity/alice%40example.com?entityTypeId=user-type-id'));
@@ -1077,8 +1078,8 @@ test('ingestDiscoveredMcpServers still ingests the MCPServer entity even if the 
     // PATCH failed. This is stricter than it used to be, and deliberately
     // so: marking it known on the POST alone left the User attribute
     // permanently missing that name with nothing ever retrying it — the
-    // exact failure that would leave registeredMcpServers empty on the
-    // tenant while the local cache insisted every name was done.
+    // exact failure that leaves registeredMcpServers empty
+    // while the local cache insists every name is done.
     const cache = JSON.parse(fs.readFileSync(path.join(dir, 'entity-types', 'catalog.json'), 'utf8'));
     assert.deepEqual(cache.knownMcpServerNames, [], 'a failed PATCH must leave the name retryable');
   });
@@ -1189,8 +1190,8 @@ test('recordMcpDiscoveryTriggered merges onto the cache rather than clobbering o
 test('a changed entity-type id clears knownMcpServerNames — a migration must not leave servers stuck "already ingested"', async () => {
   await withTempDir(async (dir) => {
     fs.mkdirSync(path.join(dir, 'entity-types'), { recursive: true });
-    // The shape left after a migration: ids already refreshed to the new
-    // store, server names still there from the old one.
+    // The exact shape after a migration: ids already
+    // refreshed to the new store, server names still there from the old one.
     fs.writeFileSync(
       path.join(dir, 'entity-types', 'catalog.json'),
       JSON.stringify({

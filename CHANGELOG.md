@@ -5,6 +5,34 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] — 2026-11-10
+
+### Changed
+
+- **Breaking: all three Reva routes moved under `/pdp/ai/access/ai/`.** Evaluation requests go
+  to `/pdp/ai/access/v1/ai/evaluation` (was `/pdp/v2/ai/evaluation`), the trace summarize call to
+  `/pdp/ai/access/v1/ai/trace/summarize`, and the plugin version check to
+  `/pdp/ai/access/ai/plugin/version`. The Reva host must serve the new routes; if it does not,
+  Reva answers 404 and the plugin blocks every action, as it does for any Reva error.
+- **Hops and conversation history are no longer sent or kept.** A request carries no
+  `context.hops`, `context.conversation` or `session.messages`, and `session` is just the thread
+  id; Reva records hops and earlier prompts itself. The local hop chain under
+  `CLAUDE_PLUGIN_DATA` is gone.
+- **The turn cache no longer holds the prompt.** It keeps only the trace id, a turn counter and
+  timestamps; the prompt is sent to Reva once and no copy is kept on the machine. A prompt left in
+  the file by an earlier version is dropped on read.
+
+### Added
+
+- **A `Stop` hook closes each turn's trace.** When Claude finishes a reply it calls
+  `/pdp/ai/access/v1/ai/trace/summarize` with the trace id, the thread id and the reply's text (capped at
+  16 KiB), so Reva can write the trace summary. It is best-effort and never blocks Claude. A
+  summarize request carries only the API token, not the user-scope verification header.
+- **A plugin version gate.** Each request carries the plugin's protocol version
+  (the `package.json` version). SessionStart reads the supported
+  window from `/pdp/ai/access/ai/plugin/version`; a plugin outside it is blocked with an update
+  message. If the version check cannot be reached the plugin carries on and Reva enforces.
+
 ## [1.4.1] — 2026-11-06
 
 ### Added

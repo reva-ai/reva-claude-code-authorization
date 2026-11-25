@@ -82,11 +82,10 @@ function runSessionStart(stdin) {
     strict_1.default.equal(status, 0);
     strict_1.default.equal(stdout, '');
 });
-// Regression coverage for a startup stall: ingestion used to run fully
-// inline and fully sequential on this hook's own process, so a slow or
-// unreachable Reva tenant stalled session startup itself, hanging the host
-// until the plugin was disabled. sessionStart.ts now deliberately still
-// waits for User/Agent
+// Regression coverage for a session-startup stall:
+// ingestion used to run fully inline and fully sequential on this hook's
+// own process, so a slow or unreachable Reva tenant stalled session startup
+// itself. sessionStart.ts now deliberately still waits for User/Agent
 // ingestion (Cedar policies can check a STORED registration, e.g.
 // machineId against User.registeredMachineIds, which needs that PATCH to
 // have already landed) — but User and Agent run concurrently, and MCP
@@ -94,38 +93,69 @@ function runSessionStart(stdin) {
 // detached, so the bound here is one ingestion timeout, not four-plus
 // stacked sequentially.
 //
-// REVA_HOST below points at 192.0.2.1 (RFC 5737 TEST-NET-1, guaranteed
-// non-routable) specifically so the connection hangs until the ingestion
-// timeout instead of failing fast — a fast local refusal wouldn't
-// distinguish "one bounded wait" from "several stacked." Every live-ish
-// test overrides REVA_HOST explicitly rather than ever touching a real
-// tenant.
-(0, node_test_1.test)('valid config, unreachable host: bounded by one ingestion timeout, not several stacked', () => {
-    const env = {
-        PATH: process.env.PATH || '',
-        REVA_AUTH_TOKEN: 'test-token',
-        REVA_AGENT_ID: 'test-agent',
-        REVA_HOST: '192.0.2.1',
-    };
-    const start = Date.now();
-    const { status, stdout } = (0, node_child_process_1.spawnSync)(process.execPath, [ENTRYPOINT], {
-        input: JSON.stringify({ session_id: 's-timing', cwd: '/tmp', source: 'startup' }),
-        env,
-        encoding: 'utf8',
-        timeout: 8000,
+// REVA_HOST points at a local hang server (test/support/hangingIngestionServer.ts)
+// that accepts connections and never responds, so the client waits until
+// AbortController fires. A black-hole IP used to stand in for this, but
+// many environments fail-fast (EPERM / ENETUNREACH) instead of hanging,
+// which made the lower-bound timing assertion flake. Per this repo's
+// standing rule, every live-ish test overrides REVA_HOST explicitly rather
+// than ever touching a real tenant.
+const HANG_SERVER_ENTRYPOINT = path.join(__dirname, 'support', 'hangingIngestionServer.js');
+const INGESTION_TIMEOUT_MS = 1000;
+function startHangingIngestionServer() {
+    return new Promise((resolve, reject) => {
+        const child = (0, node_child_process_1.spawn)(process.execPath, [HANG_SERVER_ENTRYPOINT], {
+            stdio: ['ignore', 'pipe', 'inherit'],
+        });
+        let buffer = '';
+        child.stdout.on('data', (chunk) => {
+            buffer += chunk.toString();
+            const newlineIndex = buffer.indexOf('\n');
+            if (newlineIndex !== -1) {
+                const port = Number(buffer.slice(0, newlineIndex).trim());
+                resolve({ port, stop: () => child.kill() });
+            }
+        });
+        child.on('error', reject);
     });
-    const elapsedMs = Date.now() - start;
-    strict_1.default.equal(status, 0);
-    strict_1.default.equal(stdout, '');
-    // Against an unreachable host, resolveEntityTypeIds fails first — so
-    // userEntityTypeId/agentEntityTypeId both come back unresolved and
-    // ingestUser/ingestAgent are never even attempted. Total wait is exactly
-    // one 5s ingestion timeout (config.ts's DEFAULT_INGESTION_TIMEOUT_MS),
-    // not several stacked — the old fully-sequential implementation, walking
-    // resolveEntityTypeIds/ingestUser/ingestAgent/MCP discovery in turn,
-    // could run past a minute on the same host.
-    strict_1.default.ok(elapsedMs >= 4500, `expected sessionStart.js to actually wait on ingestion, took only ${elapsedMs}ms`);
-    strict_1.default.ok(elapsedMs < 7000, `expected a single bounded wait, took ${elapsedMs}ms`);
+}
+(0, node_test_1.test)('valid config, unreachable host: bounded by one ingestion timeout, not several stacked', async () => {
+    const { port, stop } = await startHangingIngestionServer();
+    try {
+        const env = {
+            PATH: process.env.PATH || '',
+            REVA_AUTH_TOKEN: 'test-token',
+            REVA_AGENT_ID: 'test-agent',
+            REVA_HOST: `127.0.0.1:${port}`,
+            // Explicit so this assertion stays fast and independent of
+            // config.ts's DEFAULT_INGESTION_TIMEOUT_MS — the claim under test is
+            // "one timeout, not several stacked," not the default's absolute value.
+            REVA_INGESTION_TIMEOUT_MS: String(INGESTION_TIMEOUT_MS),
+        };
+        const start = Date.now();
+        const { status, stdout } = (0, node_child_process_1.spawnSync)(process.execPath, [ENTRYPOINT], {
+            input: JSON.stringify({ session_id: 's-timing', cwd: '/tmp', source: 'startup' }),
+            env,
+            encoding: 'utf8',
+            timeout: 8000,
+        });
+        const elapsedMs = Date.now() - start;
+        strict_1.default.equal(status, 0);
+        strict_1.default.equal(stdout, '');
+        // Against a hang, resolveEntityTypeIds fails first (AbortController) —
+        // so userEntityTypeId/agentEntityTypeId both come back unresolved and
+        // ingestUser/ingestAgent are never even attempted. Total wait is exactly
+        // one ingestion timeout, not several stacked — the old fully-sequential
+        // implementation, walking resolveEntityTypeIds/ingestUser/ingestAgent/MCP
+        // discovery in turn, could run past a minute on the same host.
+        // No CLAUDE_PLUGIN_DATA here, so the plugin-version gate short-circuits
+        // without its own network wait (see ensurePluginVersionGate).
+        strict_1.default.ok(elapsedMs >= INGESTION_TIMEOUT_MS * 0.8, `expected sessionStart.js to actually wait on ingestion, took only ${elapsedMs}ms`);
+        strict_1.default.ok(elapsedMs < INGESTION_TIMEOUT_MS * 2.5, `expected a single bounded wait, took ${elapsedMs}ms`);
+    }
+    finally {
+        stop();
+    }
 });
 // The actual behavior change this fix is about: User and Agent used to be
 // awaited one after another; now they run concurrently via Promise.all.

@@ -9,7 +9,7 @@ import { markSessionActive } from '../src/activeSessions';
 
 const PLUGIN_ROOT = path.resolve(__dirname, '../..');
 const HOOKS = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, 'hooks/hooks.json'), 'utf8')).hooks;
-const HOOK_NAMES = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse'] as const;
+const HOOK_NAMES = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'] as const;
 const AUTHORIZATION_HOOKS = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'] as const;
 type HookName = (typeof HOOK_NAMES)[number];
 const SESSION_ID = 'surface-isolation-session';
@@ -257,11 +257,11 @@ test('Code, future IDE and unidentified hosts enforce Reva decisions outside git
       for (const status of [200, 403]) {
         await t.test(`${entrypoint ?? 'missing entrypoint'}: ${hook}, HTTP ${status}`, async () => {
           f.response.status = status;
-          const start = f.requests.filter((request) => request.url === '/pdp/v2/ai/evaluation').length;
+          const start = f.requests.filter((request) => request.url === '/pdp/ai/access/v1/ai/evaluation').length;
           const env = { ...f.env, CLAUDE_CODE_ENTRYPOINT: entrypoint, __CFBundleIdentifier: 'com.anthropic.claudefordesktop' };
           const result = await runProcess(hookPath(hook), env, f.input(hook));
           assertAuthorizationOutput(hook, result, status === 200);
-          assert.equal(f.requests.filter((request) => request.url === '/pdp/v2/ai/evaluation').length, start + 1);
+          assert.equal(f.requests.filter((request) => request.url === '/pdp/ai/access/v1/ai/evaluation').length, start + 1);
         });
       }
     }
@@ -291,7 +291,7 @@ test('new or unknown Code tools cannot evade governance through a tool-name allo
     const result = await runProcess(hookPath(hook), { ...f.env, CLAUDE_CODE_ENTRYPOINT: 'cli' }, f.input(hook, 'FutureCodeTool'));
     assertAuthorizationOutput(hook, result, false);
   }
-  assert.equal(f.requests.filter((request) => request.url === '/pdp/v2/ai/evaluation').length, 2);
+  assert.equal(f.requests.filter((request) => request.url === '/pdp/ai/access/v1/ai/evaluation').length, 2);
 });
 
 test('explicit Code or unknown entrypoints remain governed despite an inherited Cowork marker', async (t) => {
@@ -306,5 +306,39 @@ test('explicit Code or unknown entrypoints remain governed despite an inherited 
       evaluations += 1;
     }
   }
-  assert.equal(f.requests.filter((request) => request.url === '/pdp/v2/ai/evaluation').length, evaluations);
+  assert.equal(f.requests.filter((request) => request.url === '/pdp/ai/access/v1/ai/evaluation').length, evaluations);
+});
+
+test('the submitted prompt reaches Reva but is never written anywhere on the machine', async (t) => {
+  const f = await fixture(t);
+  f.response.status = 200;
+  const marker = 'MARKER-5f3a9c-this-prompt-text-must-not-be-stored';
+  const env = { ...f.env, CLAUDE_CODE_ENTRYPOINT: 'cli' };
+  for (const hook of AUTHORIZATION_HOOKS) {
+    const payload = JSON.stringify({ ...JSON.parse(f.input(hook)), prompt: marker });
+    assertAuthorizationOutput(hook, await runProcess(hookPath(hook), env, payload), true);
+  }
+
+  const evaluations = f.requests.filter((request) => request.url === '/pdp/ai/access/v1/ai/evaluation');
+  assert.ok(
+    evaluations.some((request) => request.body.includes(marker)),
+    'the prompt is sent to Reva as the invokeAgent userQuery',
+  );
+
+  const turnFile = path.join(f.root, 'plugin-data', 'turns', `${SESSION_ID}.json`);
+  assert.ok(fs.existsSync(turnFile), 'the turn cache was written, so the scan below is not vacuous');
+  const files: string[] = [];
+  (function visit(dir: string): void {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) visit(fullPath);
+      else files.push(fullPath);
+    }
+  })(f.root);
+  for (const file of files) {
+    assert.ok(
+      !fs.readFileSync(file, 'utf8').includes(marker),
+      `${path.relative(f.root, file)} holds the submitted prompt text`,
+    );
+  }
 });
