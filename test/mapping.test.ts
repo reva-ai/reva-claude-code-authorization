@@ -217,14 +217,14 @@ test('an MCP server resolved to a real url (via the identity cache) has no skipR
 test('a claude.ai connector resolved by uuid, with a cached url, has no skipReason', () => {
   withIdentityCache(
     {
-      'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa': {
+      'd521f7ee-ac86-4efe-a02a-2f155cd06858': {
         slug: 'gmail',
         displayName: 'Gmail',
         url: 'https://gmailmcp.googleapis.com/mcp/v1',
       },
     },
     () => {
-      const m = mapToolToCedar('mcp__aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa__search_threads', {}, '/repo');
+      const m = mapToolToCedar('mcp__d521f7ee-ac86-4efe-a02a-2f155cd06858__search_threads', {}, '/repo');
       assert.equal(m.skipReason, undefined);
     },
   );
@@ -348,19 +348,19 @@ function withIdentityCache(entries: Record<string, unknown>, fn: (pluginDataDir:
 
 test('a claude.ai connector uuid in the tool name resolves to the slug discovery ingests', () => {
   // This is the bug this whole change exists for: the desktop app invokes
-  // Gmail as mcp__aaaaaaaa-1111-…__search_threads, while
+  // Gmail as mcp__<uuid>__search_threads, while
   // discovery ingested "claude.ai Gmail". Both must now say "gmail", or a
   // policy on one can never match the other.
   withIdentityCache(
     {
-      'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa': {
+      'd521f7ee-ac86-4efe-a02a-2f155cd06858': {
         slug: 'gmail',
         displayName: 'Gmail',
         url: 'https://gmailmcp.googleapis.com/mcp/v1',
       },
     },
     () => {
-      const m = mapToolToCedar('mcp__aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa__search_threads', {}, '/repo');
+      const m = mapToolToCedar('mcp__d521f7ee-ac86-4efe-a02a-2f155cd06858__search_threads', {}, '/repo');
       assert.equal(m.resourceId, 'gmail/search_threads');
       assert.deepEqual(m.resourceParents, [{ type: 'MCPServer', id: 'gmail' }]);
       // The readable name shows up in the description, so an audit entry
@@ -410,8 +410,8 @@ test('a corrupt identity cache must not throw — the PreToolUse path fails clos
     withPluginDataDir(dir, () => {
       // A throw here would reach authorize.ts's catch and DENY a legitimate
       // tool call, so this degrading quietly is the actual requirement.
-      const m = mapToolToCedar('mcp__aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa__search_threads', {}, '/repo');
-      assert.equal(m.resourceId, 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa/search_threads');
+      const m = mapToolToCedar('mcp__d521f7ee-ac86-4efe-a02a-2f155cd06858__search_threads', {}, '/repo');
+      assert.equal(m.resourceId, 'd521f7ee-ac86-4efe-a02a-2f155cd06858/search_threads');
     });
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

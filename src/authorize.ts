@@ -3,8 +3,7 @@ import { buildActionContext, buildTransmission } from './context';
 import { loadConfig } from './config';
 import { debugLog } from './debug';
 import { resolveMachineId } from './deviceId';
-import { buildEntityDescriptor, directSpecOf, refOf } from './entity';
-import { enqueuePendingSpawnLineage, loadAgentHops, resolveSubAgentLineage } from './hopChain';
+import { buildEntityDescriptor, directSpecOf } from './entity';
 import { resolveAgentContext, resolveUserEmail } from './identity';
 import { mapToolToCedar } from './mapping';
 import { triggerMcpIngestionForInvokedServer } from './mcpIngestionTrigger';
@@ -14,8 +13,8 @@ import { resolveSessionModel } from './sessionModel';
 import { readStdin } from './stdin';
 import { nextSpawnIndex } from './spawnCounter';
 import { buildSessionContext, deriveSpanId, traceparentHeader } from './trace';
-import { CedarEntityDescriptor, CedarHop, CedarRequest, RtgResult, PreToolUseInput } from './types';
-import { conversationFromTurn, directSessionFromTurn, loadOrStartTurn, resolveTurnTraceId } from './turnCache';
+import { CedarEntityDescriptor, CedarRequest, RtgResult, PreToolUseInput } from './types';
+import { directSessionFromTurn, loadOrStartTurn, resolveTurnTraceId } from './turnCache';
 
 function writeDecision(result: RtgResult): never {
   if (result.inactive) {
@@ -127,7 +126,6 @@ async function main(): Promise<void> {
         agentType: agentCtx.subAgentType || 'subagent',
       })
     : buildEntityDescriptor('Agent', agentCtx.agentId);
-  const subject = refOf(subjectDescriptor);
 
   const resourceDescriptor = buildEntityDescriptor(
     mapping.resourceType,
@@ -135,15 +133,11 @@ async function main(): Promise<void> {
     mapping.resourceProperties,
     mapping.resourceParents,
   );
-  const resource = refOf(resourceDescriptor);
-
-  const hops: CedarHop[] = agentCtx.isSubAgent
-    ? resolveSubAgentLineage(input.session_id, agentCtx.subAgentId!, pluginDataDir)
-    : loadAgentHops(input.session_id, pluginDataDir);
 
   // The direct endpoint's current transmission describes this tool hop; if
   // the host calls this hook without UserPromptSubmit, use only real action
   // data observed here because the endpoint rejects a blank current prompt.
+  // RTG records hops server-side — no local hop chain on disk.
   const serializedInput = JSON.stringify(input.tool_input || {});
   const currentHopContent =
     mapping.command?.trim() || mapping.pattern?.trim() ||
@@ -156,36 +150,19 @@ async function main(): Promise<void> {
     resource: directSpecOf(resourceDescriptor),
     context: buildActionContext(mapping, {
       subagentIndex,
-      hops,
-      conversationMessages: conversationFromTurn(turn),
       activeSessionCount,
       currentSession,
       machineId: resolveMachineId(pluginDataDir),
       model: sessionModel?.model,
     }),
     transmission: buildTransmission(currentHopContent, 'assistant', input.tool_name),
-    session: directSessionFromTurn(input.session_id, turn),
+    session: directSessionFromTurn(input.session_id),
   };
-
-  // If this action IS a spawn, queue the lineage the resulting subagent
-  // should inherit — its own id isn't known yet (Claude Code only reveals
-  // it on that subagent's own first tool call), so this is matched up
-  // later, in FIFO order, by resolveSubAgentLineage above.
-  if (mapping.actionName === 'spawn') {
-    const spawnHop: CedarHop = {
-      seq: hops.length + 1,
-      subject,
-      action: { name: 'spawn' },
-      resource,
-      time: new Date().toISOString(),
-    };
-    enqueuePendingSpawnLineage(input.session_id, hops, spawnHop, pluginDataDir);
-  }
 
   debugLog(
     `-> ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}${
       subagentIndex !== undefined ? `, subagentIndex=${subagentIndex}` : ''
-    }, hops=${hops.length}, model=${sessionModel ? `${sessionModel.model ?? 'unknown'} via ${sessionModel.source}` : 'off'})`,
+    }, model=${sessionModel ? `${sessionModel.model ?? 'unknown'} via ${sessionModel.source}` : 'off'})`,
   );
   const result = await evaluate(cfg, request, traceparent, pluginDataDir, input.session_id);
   debugLog(`<- decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);

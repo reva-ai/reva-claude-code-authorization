@@ -6,6 +6,8 @@ import { ingestAgent, ingestUser, recordMcpDiscoveryTriggered, resolveEntityType
 import { resolveUserEmail } from './identity';
 import { spawnMcpIngestion } from './mcpIngestionTrigger';
 import { refreshMcpServerIdentityCache } from './mcpServerIdentity';
+import { ensurePluginVersionGate } from './pluginVersionGate';
+import { fetchPluginVersionWindow } from './rtgClient';
 import { skipOutsideCodeScope } from './runtimeScope';
 import { recordSessionModel } from './sessionModel';
 import { readStdin } from './stdin';
@@ -61,8 +63,8 @@ async function main(): Promise<void> {
 
   // hooks.json also routes `clear|compact` here, ONLY so a session opened by
   // /clear (a new session_id) gets its model recorded above. Everything below
-  // — ingestion and MCP discovery — previously never ran for those sources
-  // and still doesn't.
+  // — ingestion, the version gate, MCP discovery — previously never ran for
+  // those sources and still doesn't.
   if (input.source === 'clear' || input.source === 'compact') {
     process.exit(0);
   }
@@ -111,10 +113,26 @@ async function main(): Promise<void> {
     // best-effort ingestion failure, rather than treated as a special case.
     const cfg = loadConfig();
 
+    // Plugin protocol version — fail closed outside [minimum supported
+    // version, current]: latch,
+    // then exit 2 + stderr so the host tells the user to update the plugin.
+    try {
+      const gate = await ensurePluginVersionGate(input.session_id, pluginDataDir, () =>
+        fetchPluginVersionWindow(cfg),
+      );
+      if (gate.status === 'blocked') {
+        debugLog(`sessionStart: plugin version blocked — ${gate.reason}`);
+        process.stderr.write(`${gate.reason}\n`);
+        process.exit(2);
+      }
+    } catch (err: any) {
+      debugLog(`sessionStart: plugin version check failed — continuing (${err?.message || String(err)})`);
+    }
+
     // Forced fresh fetch, replacing whatever's cached, once per session —
     // plain and simple: rather than only reacting after something has
-    // already failed against a stale cached id (a policy-store/tenant
-    // migration reassigns these ids server-side — see
+    // already failed against a stale cached id (a server-side migration can
+    // reassign these ids — see
     // invalidateStaleIngestionCache's own comment), this makes sure the
     // ids are never stale to begin with for the rest of this session.
     // Done BEFORE spawning MCP ingestion below so that detached child

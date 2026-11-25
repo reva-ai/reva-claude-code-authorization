@@ -8,8 +8,6 @@ const node_test_1 = require("node:test");
 const invokeAgent_1 = require("../src/invokeAgent");
 const session = {
     id: '33333333-3333-4333-8333-333333333333',
-    turn: 3,
-    startedAt: '2026-08-14T09:57:30Z',
 };
 (0, node_test_1.test)('buildInvokeAgentRequest emits the canonical direct-AI User to Agent envelope', () => {
     const request = (0, invokeAgent_1.buildInvokeAgentRequest)('alice@example.com', 'agent-a', 'hello', session);
@@ -23,9 +21,12 @@ const session = {
         role: 'user',
         contentType: 'text/plain',
     });
-    strict_1.default.deepEqual(request.context.hops, []);
+    strict_1.default.equal('hops' in request.context, false);
+    strict_1.default.equal('conversation' in request.context, false);
     strict_1.default.deepEqual(request.session, session);
     strict_1.default.equal('messages' in request.session, false);
+    strict_1.default.equal('turn' in request.session, false);
+    strict_1.default.equal('startedAt' in request.session, false);
     strict_1.default.equal('entities' in request, false);
     strict_1.default.equal('hops' in request, false);
 });

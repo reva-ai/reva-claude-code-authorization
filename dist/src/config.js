@@ -6,9 +6,13 @@ exports.loadConfig = loadConfig;
 const debug_1 = require("./debug");
 const deviceId_1 = require("./deviceId");
 const DEFAULT_TIMEOUT_MS = 25000;
-// The path segment itself is Reva's actual API route — fixed by the
-// backend, not ours to rename regardless of what we call this internally.
-const RTG_PATH = '/pdp/v2/ai/evaluation';
+// Always the gateway aliases (/pdp/ai/access/v1/ai/*, /ingestion/v2). Local or remote,
+// REVA_HOST should point at the API gateway (api.reva.ai or a local
+// gateway) — not a backend service directly. The gateway rewrites these to
+// the evaluation/ingestion backends.
+const RTG_PATH = '/pdp/ai/access/v1/ai/evaluation';
+const PLUGIN_VERSION_PATH = '/pdp/ai/access/ai/plugin/version';
+const SUMMARIZE_PATH = '/pdp/ai/access/v1/ai/trace/summarize';
 const INGESTION_PATH = '/ingestion/v2';
 //  REVA_HOST overrides this.
 exports.DEFAULT_HOST = 'api.reva.ai';
@@ -27,7 +31,7 @@ const DEFAULT_INGESTION_TIMEOUT_MS = 5000;
 //
 // The plain REVA_* env vars still take priority when present — kept as the
 // escape hatch for local development and the mock-RTG testing workflow
-// (README "Testing"), and so anyone already using the older manual
+// (see CONTRIBUTING.md), and so anyone already using the older manual
 // settings.json `env` approach isn't forced to redo anything.
 // Whether a config value arrived, WITHOUT ever revealing it. "set" vs
 // "empty" vs "absent" are three different problems: absent means nobody
@@ -64,9 +68,12 @@ function loadConfig(env = process.env) {
     // not on the default host can be configured entirely from the install
     // dialog without anyone editing an environment variable — which is what
     // the README and docs/INSTALL.md tell users to do (`--config host=`).
-    // Paths are fixed in code.
+    // Same gateway paths everywhere — a local gateway or api.reva.ai. Point the
+    // host at the gateway, not a backend service directly.
     const host = readOption(env, 'REVA_HOST', 'HOST').trim() || exports.DEFAULT_HOST;
     const rtgUrl = urlFromHost(host, RTG_PATH);
+    const pluginVersionUrl = urlFromHost(host, PLUGIN_VERSION_PATH);
+    const summarizeUrl = urlFromHost(host, SUMMARIZE_PATH);
     const ingestionUrl = urlFromHost(host, INGESTION_PATH);
     // One token authenticates everything this plugin does — evaluation AND
     // ingestion. No separate ingestion credential, no fallback logic: there's
@@ -109,6 +116,8 @@ function loadConfig(env = process.env) {
     }
     return {
         rtgUrl,
+        pluginVersionUrl,
+        summarizeUrl,
         authorization,
         agentId,
         // REVA_PDP_TIMEOUT_MS is a public, documented config variable — its

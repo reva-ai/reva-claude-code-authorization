@@ -87,8 +87,8 @@ function readOauthEmail(claudeJsonPath) {
 // is Anthropic's own stable account identifier (a UUID under oauthAccount,
 // distinct from organizationUuid — the org, not the person — and from the
 // top-level userID, which looks like a local/install-derived hash rather
-// than a portable account id). Used as the Cedar `Agent` entity's id (see
-// resolveAgentId below).
+// than a portable account id). Now used as the Cedar `Agent` entity's id
+// (see resolveAgentId below).
 function readOauthAccountId(claudeJsonPath) {
     try {
         const filePath = claudeJsonPath ||

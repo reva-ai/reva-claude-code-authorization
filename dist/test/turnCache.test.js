@@ -53,30 +53,28 @@ function withTempDir(fn) {
 }
 (0, node_test_1.test)('startTurn persists a span id that loadTurn reads back for the same session', () => {
     withTempDir((dir) => {
-        const turn = (0, turnCache_1.startTurn)('sess-1', 'do the thing', dir);
+        const turn = (0, turnCache_1.startTurn)('sess-1', dir);
         const loaded = (0, turnCache_1.loadTurn)('sess-1', dir);
         strict_1.default.equal(loaded?.traceId, turn.traceId);
-        strict_1.default.equal(loaded?.prompt, 'do the thing');
         strict_1.default.equal(loaded?.turn, 1);
         strict_1.default.match(loaded?.startedAt || '', /^\d{4}-\d{2}-\d{2}T/);
     });
 });
 (0, node_test_1.test)('a second startTurn call for the same session overwrites the previous turn', () => {
     withTempDir((dir) => {
-        const first = (0, turnCache_1.startTurn)('sess-1', 'turn one prompt', dir);
-        const second = (0, turnCache_1.startTurn)('sess-1', 'turn two prompt', dir);
+        const first = (0, turnCache_1.startTurn)('sess-1', dir);
+        const second = (0, turnCache_1.startTurn)('sess-1', dir);
         strict_1.default.notEqual(first.traceId, second.traceId);
         const loaded = (0, turnCache_1.loadTurn)('sess-1', dir);
         strict_1.default.equal(loaded?.traceId, second.traceId);
-        strict_1.default.equal(loaded?.prompt, 'turn two prompt');
         strict_1.default.equal(loaded?.turn, 2);
         strict_1.default.equal(second.startedAt, first.startedAt);
     });
 });
 (0, node_test_1.test)('different sessions get independent turn entries', () => {
     withTempDir((dir) => {
-        const a = (0, turnCache_1.startTurn)('sess-a', 'prompt a', dir);
-        const b = (0, turnCache_1.startTurn)('sess-b', 'prompt b', dir);
+        const a = (0, turnCache_1.startTurn)('sess-a', dir);
+        const b = (0, turnCache_1.startTurn)('sess-b', dir);
         strict_1.default.notEqual(a.traceId, b.traceId);
         strict_1.default.equal((0, turnCache_1.loadTurn)('sess-a', dir)?.traceId, a.traceId);
         strict_1.default.equal((0, turnCache_1.loadTurn)('sess-b', dir)?.traceId, b.traceId);
@@ -87,32 +85,24 @@ function withTempDir(fn) {
         strict_1.default.equal((0, turnCache_1.loadTurn)('never-seen', dir), undefined);
     });
 });
-(0, node_test_1.test)('a prompt-less turn still gets a span id, with no prompt field', () => {
+(0, node_test_1.test)('a turn entry carries the trace id and turn bookkeeping, never a prompt field', () => {
     withTempDir((dir) => {
-        const turn = (0, turnCache_1.startTurn)('sess-1', undefined, dir);
+        const turn = (0, turnCache_1.startTurn)('sess-1', dir);
         const loaded = (0, turnCache_1.loadTurn)('sess-1', dir);
         strict_1.default.equal(loaded?.traceId, turn.traceId);
-        strict_1.default.equal(loaded?.prompt, undefined);
+        strict_1.default.deepEqual(Object.keys(loaded || {}).sort(), ['promptTimestamp', 'startedAt', 'traceId', 'turn']);
+        const file = JSON.parse(fs.readFileSync(path.join(dir, 'turns', 'sess-1.json'), 'utf8'));
+        strict_1.default.deepEqual(Object.keys(file).sort(), ['promptTimestamp', 'startedAt', 'traceId', 'turn']);
     });
 });
-(0, node_test_1.test)('direct session is metadata-only and conversation uses the observed prompt timestamp', () => {
+(0, node_test_1.test)('direct session is thread id only — RTG owns turn numbers and prior prompts', () => {
     withTempDir((dir) => {
-        const turn = (0, turnCache_1.startTurn)('sess-1', 'do the thing', dir);
-        strict_1.default.deepEqual((0, turnCache_1.directSessionFromTurn)('sess-1', turn), {
-            id: 'sess-1',
-            turn: 1,
-            startedAt: turn.startedAt,
-        });
+        const turn = (0, turnCache_1.startTurn)('sess-1', dir);
+        strict_1.default.deepEqual((0, turnCache_1.directSessionFromTurn)('sess-1', turn), { id: 'sess-1' });
+        strict_1.default.deepEqual((0, turnCache_1.directSessionFromTurn)('sess-1'), { id: 'sess-1' });
         strict_1.default.equal('messages' in (0, turnCache_1.directSessionFromTurn)('sess-1', turn), false);
-        strict_1.default.deepEqual((0, turnCache_1.conversationFromTurn)(turn), [
-            {
-                seq: 1,
-                role: 'user',
-                contentType: 'text/plain',
-                content: 'do the thing',
-                timestamp: turn.promptTimestamp,
-            },
-        ]);
+        strict_1.default.equal('turn' in (0, turnCache_1.directSessionFromTurn)('sess-1', turn), false);
+        strict_1.default.equal('startedAt' in (0, turnCache_1.directSessionFromTurn)('sess-1', turn), false);
     });
 });
 (0, node_test_1.test)('truncatePrompt keeps a prompt of up to 10000 characters whole', () => {
@@ -129,7 +119,7 @@ function withTempDir(fn) {
 (0, node_test_1.test)('with no pluginDataDir, startTurn/loadTurn still work but never persist — no fallback to a home-directory dotfile', () => {
     const homeRevaGovernance = path.join(os.homedir(), '.reva-governance');
     const existedBefore = fs.existsSync(homeRevaGovernance);
-    const turn = (0, turnCache_1.startTurn)('sess-1', 'hello', undefined);
+    const turn = (0, turnCache_1.startTurn)('sess-1', undefined);
     strict_1.default.equal(turn.turn, 1); // still a usable entry for this call
     strict_1.default.equal((0, turnCache_1.loadTurn)('sess-1', undefined), undefined); // but never actually persisted
     strict_1.default.equal(fs.existsSync(homeRevaGovernance), existedBefore);
@@ -161,17 +151,23 @@ function withTempDir(fn) {
         strict_1.default.equal(turn.turn, 13);
         strict_1.default.equal(turn.startedAt, '2026-09-20T09:00:00.000Z');
         strict_1.default.equal(turn.traceId, undefined);
+        // The old entry's prompt text is not carried into what callers see.
+        strict_1.default.equal('prompt' in turn, false);
+        strict_1.default.equal('prompt' in ((0, turnCache_1.loadTurn)('sess-old', dir) || {}), false);
         // …and every hook still agrees on a trace for it, via the fallback.
         const first = (0, turnCache_1.resolveTurnTraceId)('sess-old', turn);
         const second = (0, turnCache_1.resolveTurnTraceId)('sess-old', (0, turnCache_1.loadOrStartTurn)('sess-old', dir));
         strict_1.default.equal(first, second);
         strict_1.default.match(first, /^[0-9a-f]{32}$/);
         // The next prompt recovers to a minted id and drops the stale field.
-        const next = (0, turnCache_1.startTurn)('sess-old', 'next prompt', dir);
+        const next = (0, turnCache_1.startTurn)('sess-old', dir);
         strict_1.default.match(next.traceId || '', /^[0-9a-f]{32}$/);
         strict_1.default.equal(next.turn, 14);
         strict_1.default.equal(next.startedAt, '2026-09-20T09:00:00.000Z');
         strict_1.default.ok(!('spanId' in next));
+        strict_1.default.ok(!('prompt' in next));
+        // …and the file on disk no longer holds the old prompt either.
+        strict_1.default.ok(!fs.readFileSync(path.join(dir, 'turns', 'sess-old.json'), 'utf8').includes('an older prompt'));
     });
 });
 (0, node_test_1.test)('cleanSubmittedPrompt removes the paste tags and keeps the pasted text', () => {

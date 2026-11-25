@@ -63,8 +63,7 @@ function spawnMcpIngestion(cwd, pluginDataDir, invokedServer) {
                 // which by definition finds nothing new for a server that lives in
                 // no config file — so an app-provided server (Claude_Browser,
                 // claude-in-chrome, the iOS simulator) triggered a pass that ingested
-                // nothing, every time: the trigger fired for an app-provided
-                // server, the child ran, and the name was still absent afterwards.
+                // nothing, every time.
                 ...(invokedServer ? { REVA_INVOKED_MCP_SERVER: invokedServer } : {}),
             },
         });
@@ -101,10 +100,9 @@ function triggerMcpDiscoveryIfDue(cwd, pluginDataDir, isDue = ingestionClient_1.
 // the only evidence those exist, so it is the only way they can ever be
 // inventoried.
 //
-// That value was claimed in an earlier version of this comment but not
-// actually delivered: the spawn passed only cwd, so the child re-ran
-// discovery and found exactly nothing new for precisely those servers. The
-// invoked name is now passed through and ingested directly.
+// To make that work, the spawn passes the invoked name through to the child
+// and it is ingested directly: re-running discovery alone would find exactly
+// nothing new for precisely those servers.
 //
 // Called from the PreToolUse path, so the ordering matters: the known-name
 // check runs first and costs one cached read, the spawn is detached and

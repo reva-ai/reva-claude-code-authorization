@@ -6,7 +6,6 @@ const config_1 = require("./config");
 const debug_1 = require("./debug");
 const deviceId_1 = require("./deviceId");
 const entity_1 = require("./entity");
-const hopChain_1 = require("./hopChain");
 const identity_1 = require("./identity");
 const mapping_1 = require("./mapping");
 const mcpIngestionTrigger_1 = require("./mcpIngestionTrigger");
@@ -115,15 +114,11 @@ async function main() {
             agentType: agentCtx.subAgentType || 'subagent',
         })
         : (0, entity_1.buildEntityDescriptor)('Agent', agentCtx.agentId);
-    const subject = (0, entity_1.refOf)(subjectDescriptor);
     const resourceDescriptor = (0, entity_1.buildEntityDescriptor)(mapping.resourceType, mapping.resourceId, mapping.resourceProperties, mapping.resourceParents);
-    const resource = (0, entity_1.refOf)(resourceDescriptor);
-    const hops = agentCtx.isSubAgent
-        ? (0, hopChain_1.resolveSubAgentLineage)(input.session_id, agentCtx.subAgentId, pluginDataDir)
-        : (0, hopChain_1.loadAgentHops)(input.session_id, pluginDataDir);
     // The direct endpoint's current transmission describes this tool hop; if
     // the host calls this hook without UserPromptSubmit, use only real action
     // data observed here because the endpoint rejects a blank current prompt.
+    // RTG records hops server-side — no local hop chain on disk.
     const serializedInput = JSON.stringify(input.tool_input || {});
     const currentHopContent = mapping.command?.trim() || mapping.pattern?.trim() ||
         (serializedInput !== '{}' ? serializedInput : input.tool_name);
@@ -134,31 +129,15 @@ async function main() {
         resource: (0, entity_1.directSpecOf)(resourceDescriptor),
         context: (0, context_1.buildActionContext)(mapping, {
             subagentIndex,
-            hops,
-            conversationMessages: (0, turnCache_1.conversationFromTurn)(turn),
             activeSessionCount,
             currentSession,
             machineId: (0, deviceId_1.resolveMachineId)(pluginDataDir),
             model: sessionModel?.model,
         }),
         transmission: (0, context_1.buildTransmission)(currentHopContent, 'assistant', input.tool_name),
-        session: (0, turnCache_1.directSessionFromTurn)(input.session_id, turn),
+        session: (0, turnCache_1.directSessionFromTurn)(input.session_id),
     };
-    // If this action IS a spawn, queue the lineage the resulting subagent
-    // should inherit — its own id isn't known yet (Claude Code only reveals
-    // it on that subagent's own first tool call), so this is matched up
-    // later, in FIFO order, by resolveSubAgentLineage above.
-    if (mapping.actionName === 'spawn') {
-        const spawnHop = {
-            seq: hops.length + 1,
-            subject,
-            action: { name: 'spawn' },
-            resource,
-            time: new Date().toISOString(),
-        };
-        (0, hopChain_1.enqueuePendingSpawnLineage)(input.session_id, hops, spawnHop, pluginDataDir);
-    }
-    (0, debug_1.debugLog)(`-> ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}${subagentIndex !== undefined ? `, subagentIndex=${subagentIndex}` : ''}, hops=${hops.length}, model=${sessionModel ? `${sessionModel.model ?? 'unknown'} via ${sessionModel.source}` : 'off'})`);
+    (0, debug_1.debugLog)(`-> ${mapping.actionName} on ${mapping.resourceType}:${mapping.resourceId} (tool=${input.tool_name}${subagentIndex !== undefined ? `, subagentIndex=${subagentIndex}` : ''}, model=${sessionModel ? `${sessionModel.model ?? 'unknown'} via ${sessionModel.source}` : 'off'})`);
     const result = await (0, rtgClient_1.evaluate)(cfg, request, traceparent, pluginDataDir, input.session_id);
     (0, debug_1.debugLog)(`<- decision=${result.decision}${result.reason ? ` reason="${result.reason}"` : ''}`);
     writeDecision(result);

@@ -50,7 +50,7 @@ code implements and the tests that hold it in place.
 ## What a hook does on an excluded surface
 
 Every registered hook — `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`,
-`PostToolUse` — plus the detached MCP-discovery entrypoint (`dist/src/ingestMcpServers.js`)
+`PostToolUse`, `Stop` — plus the detached MCP-discovery entrypoint (`dist/src/ingestMcpServers.js`)
 returns immediately. Specifically, on a Cowork runtime the plugin:
 
 - exits 0 with **empty stdout**, so Claude Code keeps its own native permission behaviour
@@ -79,7 +79,7 @@ to the network or touches disk when it should not. It asserts, in full combinati
 |---|---|
 | Cowork surfaces | `local-agent`, `remote_cowork`, `remote_cowork_trigger`, `CLAUDE_CODE_IS_COWORK=1` |
 | Code entrypoints | `cli`, `claude-vscode`, `claude-desktop`, `claude-desktop-3p`, `sdk-py`, an unknown `future-ide`, and no entrypoint at all |
-| Hooks | all five, resolved from `hooks/hooks.json` rather than a second hard-coded list |
+| Hooks | all six, resolved from `hooks/hooks.json` rather than a second hard-coded list |
 | Payloads | a valid one, a malformed one, and **stdin left open** — which catches a guard placed after `readStdin()` |
 
 On top of that grid it checks that Cowork stays inert inside a Git repository and for the

@@ -18,7 +18,7 @@ Plugin id: `reva-security`, from the `reva-plugins` marketplace.
 
 ## How it works
 
-The plugin hooks five points in a Claude Code session:
+The plugin hooks six points in a Claude Code session:
 
 | When | What happens |
 | --- | --- |
@@ -26,6 +26,7 @@ The plugin hooks five points in a Claude Code session:
 | You submit a prompt | Checks whether you're allowed to invoke the coding agent at all this turn. Also rechecks for newly-configured MCP servers roughly every 15 minutes, so one added mid-session doesn't wait until your next session to register. |
 | Before any tool call | Checks whether that specific action is allowed, and blocks it if not. |
 | After a tool call completes | Re-evaluates with the actual result, for policies that care what a command returned. |
+| A turn finishes | Asks Reva to close that prompt's trace, sending the assistant's final reply text. Best-effort — never blocks or alters Claude's response. |
 | A session ends | Removes the session from local active-session tracking. No Reva request. |
 
 Every check is synchronous, before (or immediately after) the action.
@@ -46,9 +47,9 @@ The distinction uses host runtime markers, not tool names: Cowork also has Bash,
 Read, Write, and MCP tools. Missing or unknown runtime markers retain Code
 enforcement; an explicit Code entrypoint wins over an inherited Cowork flag.
 
-See [Desktop compatibility](docs/DESKTOP-COMPATIBILITY.md) for how the plugin tells
-Code from Chat/Cowork, update instructions, and the verification matrix.
-Version **1.1.0** was the first public release containing the
+See [Desktop compatibility](docs/DESKTOP-COMPATIBILITY.md) for the runtime
+evidence, update instructions, and the verification matrix. Version **1.1.0** was
+the first public release containing the
 isolation fix; an older
 installed or cached plugin will continue running its older code.
 

@@ -1,7 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.fetchPluginVersionWindow = fetchPluginVersionWindow;
 exports.evaluate = evaluate;
+exports.summarizeTrace = summarizeTrace;
 const debug_1 = require("./debug");
+const pluginVersion_1 = require("./pluginVersion");
+const pluginVersionGate_1 = require("./pluginVersionGate");
 const rtgCircuitBreaker_1 = require("./rtgCircuitBreaker");
 const RTG_UNAVAILABLE = 'RTG_UNAVAILABLE';
 const RTG_TIMEOUT = 'RTG_TIMEOUT';
@@ -93,13 +97,51 @@ async function postJson(cfg, url, body, traceparent, threadId) {
     }
 }
 async function postToRtg(cfg, request, traceparent, threadId) {
-    return postJson(cfg, cfg.rtgUrl, request, traceparent, threadId);
+    return postJson(cfg, cfg.rtgUrl, { ...request, pluginVersion: pluginVersion_1.PLUGIN_VERSION }, traceparent, threadId);
+}
+async function fetchPluginVersionWindow(cfg) {
+    // Keep this short — SessionStart awaits it and must not stall startup.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.min(cfg.timeoutMs, 1000));
+    try {
+        // No X-Reva-Verification-Codes: CODE_USER_SCOPE needs a request body with
+        // principal.id. getVersion is a GET with no body, so that check cannot
+        // succeed here — only evaluate sends it.
+        const headers = {
+            'X-API-Origin-App': 'CLAUDE_CODE',
+            ...(cfg.authorization ? { 'X-API-Token': cfg.authorization } : {}),
+        };
+        (0, debug_1.debugLog)(`getPluginVersion: GET ${cfg.pluginVersionUrl}`);
+        const res = await fetch(cfg.pluginVersionUrl, {
+            method: 'GET',
+            headers,
+            signal: controller.signal,
+        });
+        const text = await res.text().catch(() => '');
+        const json = parseJson(text);
+        if (res.status !== 200 || json == null || typeof json !== 'object') {
+            (0, debug_1.debugLog)(`getPluginVersion: HTTP ${res.status} ${text.slice(0, 200)}`);
+            return null;
+        }
+        const minimumSupportedVersion = typeof json.minimumSupportedVersion === 'string' ? json.minimumSupportedVersion.trim() : '';
+        const currentVersion = typeof json.currentVersion === 'string' ? json.currentVersion.trim() : '';
+        if (!minimumSupportedVersion || !currentVersion)
+            return null;
+        return { minimumSupportedVersion, currentVersion };
+    }
+    catch (err) {
+        (0, debug_1.debugLog)(`getPluginVersion: failed — ${err?.message || String(err)}`);
+        return null;
+    }
+    finally {
+        clearTimeout(timer);
+    }
 }
 // Only 401 and 413 fail open here — everything else operational (404, 424,
 // 5xx) now fails CLOSED (an active deny, not a silent pass-through), by
-// design: governance must hold even while Reva itself is
-// erroring or unreachable, rather than degrade to "no extra governance for
-// that moment." `inactive: true` is therefore only ever set on the 401/413
+// design: governance must hold even while Reva itself is erroring or
+// unreachable, rather than degrade to "no extra governance for that
+// moment." `inactive: true` is therefore only ever set on the 401/413
 // branches below — everything else must reach Claude Code as an explicit
 // deny (inactive would suppress that and let the action through).
 //
@@ -206,7 +248,20 @@ async function evaluate(cfg, request, traceparent, pluginDataDir, threadId) {
             raw: { circuitOpen: true, openedAt: breaker.openedAt },
         };
     }
+    // SessionStart writes this latch via getVersion. Evaluate only reads it.
+    const versionGate = (0, pluginVersionGate_1.readPluginVersionGate)(threadId, pluginDataDir);
+    if (versionGate.status === 'blocked') {
+        (0, debug_1.debugLog)(`evaluate: RTG not called — plugin version blocked for this session (${versionGate.errorType})`);
+        return {
+            decision: 'deny',
+            reason: versionGate.reason,
+            errorType: versionGate.errorType,
+            status: 403,
+            raw: { pluginVersion: pluginVersion_1.PLUGIN_VERSION, gate: 'blocked' },
+        };
+    }
     try {
+        (0, debug_1.debugLog)(`evaluate: POST ${cfg.rtgUrl} pluginVersion=${pluginVersion_1.PLUGIN_VERSION}`);
         const res = await postToRtg(cfg, request, traceparent, threadId);
         // Logged once here, centrally, so every caller gets it for free rather
         // than each hook needing to remember to log the response itself — the
@@ -233,6 +288,22 @@ async function evaluate(cfg, request, traceparent, pluginDataDir, threadId) {
             };
         }
         if (res.status === 403) {
+            const errorType = errorTypeOf(res.json);
+            if ((0, pluginVersion_1.isPluginVersionErrorType)(errorType)) {
+                const versionErrorType = errorType;
+                const reason = versionErrorType === pluginVersion_1.ERROR_TYPE_PLUGIN_VERSION_INVALID
+                    ? (0, pluginVersion_1.invalidPluginVersionReason)()
+                    : (0, pluginVersion_1.unsupportedPluginVersionReason)(pluginVersion_1.PLUGIN_VERSION);
+                if (threadId)
+                    (0, pluginVersionGate_1.markPluginVersionBlocked)(threadId, pluginDataDir, reason, versionErrorType);
+                return {
+                    decision: 'deny',
+                    reason,
+                    errorType: versionErrorType,
+                    status: 403,
+                    raw: res.json ?? res.text,
+                };
+            }
             // Always this fixed message on a policy deny, regardless of whatever
             // reason RTG's own response carries — by design, the end user sees a
             // consistent, generic notice rather than RTG's specific policy text.
@@ -241,7 +312,7 @@ async function evaluate(cfg, request, traceparent, pluginDataDir, threadId) {
             return {
                 decision: 'deny',
                 reason: "Blocked by your organization's security policy.",
-                errorType: errorTypeOf(res.json),
+                errorType,
                 status: 403,
                 raw: res.json ?? res.text,
             };
@@ -262,5 +333,43 @@ async function evaluate(cfg, request, traceparent, pluginDataDir, threadId) {
     catch (err) {
         (0, debug_1.debugLog)(`evaluate: RTG request failed — ${err?.message || String(err)}`);
         return handleTransportFailure(err);
+    }
+}
+// Best-effort: closes one prompt trace so RTG can write its trace summary.
+// Never throws into the hook — a failed summarize must not block Claude.
+async function summarizeTrace(cfg, body) {
+    const controller = new AbortController();
+    // Summarize is fire-and-forget relative to the UX; keep it short.
+    const timer = setTimeout(() => controller.abort(), Math.min(cfg.timeoutMs, 5000));
+    try {
+        const payload = JSON.stringify(body);
+        (0, debug_1.debugLog)(`summarizeTrace: POST ${cfg.summarizeUrl} body=${payload}`);
+        // No X-Reva-Verification-Codes: CODE_USER_SCOPE needs principal.id in the
+        // body, and summarize only sends trace_id/output/thread_id. Auth is the
+        // API token alone (same as getPluginVersion).
+        const res = await fetch(cfg.summarizeUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Origin-App': 'CLAUDE_CODE',
+                ...(cfg.authorization ? { 'X-API-Token': cfg.authorization } : {}),
+                ...(body.thread_id ? { 'X-Reva-Thread-Id': body.thread_id } : {}),
+            },
+            body: payload,
+            signal: controller.signal,
+        });
+        const text = await res.text().catch(() => '');
+        (0, debug_1.debugLog)(`summarizeTrace: HTTP ${res.status} ${text.slice(0, 200)}`);
+        if (res.status === 202)
+            return { ok: true, status: 202 };
+        return { ok: false, status: res.status, reason: text.slice(0, 300) };
+    }
+    catch (err) {
+        const reason = err?.message || String(err);
+        (0, debug_1.debugLog)(`summarizeTrace: failed — ${reason}`);
+        return { ok: false, reason };
+    }
+    finally {
+        clearTimeout(timer);
     }
 }

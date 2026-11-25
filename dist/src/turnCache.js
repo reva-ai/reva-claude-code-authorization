@@ -39,14 +39,12 @@ exports.startTurn = startTurn;
 exports.loadTurn = loadTurn;
 exports.loadOrStartTurn = loadOrStartTurn;
 exports.directSessionFromTurn = directSessionFromTurn;
-exports.conversationFromTurn = conversationFromTurn;
 exports.resolveTurnTraceId = resolveTurnTraceId;
 const fs = __importStar(require("node:fs"));
 const path = __importStar(require("node:path"));
 const trace_1 = require("./trace");
-// Sent as the invokeAgent userQuery and again as context.conversation on every
-// tool call in the turn. An RTG 413 fails open for that request, so raise this
-// only after confirming the RTG accepts the resulting request size.
+// Sent as the invokeAgent userQuery. An RTG 413 fails open for that request,
+// so raise this only after confirming the RTG accepts the resulting request size.
 const MAX_PROMPT_LENGTH = 10000;
 // No fallback: only ever writes inside CLAUDE_PLUGIN_DATA (Claude Code's
 // own per-plugin data directory — the officially documented mechanism for
@@ -109,7 +107,7 @@ function saveTurn(sessionId, entry, pluginDataDir) {
         // best effort — later hooks can reconstruct metadata from what they see
     }
 }
-function startTurn(sessionId, prompt, pluginDataDir) {
+function startTurn(sessionId, pluginDataDir) {
     const previous = loadTurn(sessionId, pluginDataDir);
     const observedAt = new Date().toISOString();
     const turn = (previous?.turn || 0) + 1;
@@ -123,7 +121,6 @@ function startTurn(sessionId, prompt, pluginDataDir) {
     const traceId = cacheFile(sessionId, pluginDataDir) ? (0, trace_1.mintTraceId)() : (0, trace_1.deriveTraceId)(sessionId, turn);
     const entry = {
         traceId,
-        ...(prompt ? { prompt: truncatePrompt(prompt) } : {}),
         promptTimestamp: observedAt,
         turn,
         startedAt: previous?.startedAt || observedAt,
@@ -137,7 +134,10 @@ function loadTurn(sessionId, pluginDataDir) {
         return undefined;
     try {
         const raw = fs.readFileSync(file, 'utf8');
-        return JSON.parse(raw);
+        // `prompt` is what earlier versions stored here. Dropped on read so no
+        // caller can carry it forward into a new entry.
+        const { prompt: _legacyPrompt, ...entry } = JSON.parse(raw);
+        return entry;
     }
     catch {
         return undefined;
@@ -150,23 +150,11 @@ function loadOrStartTurn(sessionId, pluginDataDir) {
     const existing = loadTurn(sessionId, pluginDataDir);
     if (existing?.turn && existing.startedAt && existing.promptTimestamp)
         return existing;
-    return startTurn(sessionId, existing?.prompt, pluginDataDir);
+    return startTurn(sessionId, pluginDataDir);
 }
-function directSessionFromTurn(sessionId, turn) {
-    return { id: sessionId, turn: turn.turn, startedAt: turn.startedAt };
-}
-function conversationFromTurn(turn) {
-    if (!turn.prompt?.trim())
-        return [];
-    return [
-        {
-            seq: 1,
-            role: 'user',
-            contentType: 'text/plain',
-            content: turn.prompt,
-            timestamp: turn.promptTimestamp,
-        },
-    ];
+// RTG only needs the thread id on the evaluate body; turn/startedAt are local.
+function directSessionFromTurn(sessionId, _turn) {
+    return { id: sessionId };
 }
 // The trace id every hook in this turn must agree on. Normally read straight
 // from the cache entry UserPromptSubmit wrote. The fallback covers an entry

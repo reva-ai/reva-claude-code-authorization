@@ -160,10 +160,10 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    // Real Reva backend route — kept as /pdp/v2/... regardless of internal
+    // Real Reva backend route — kept as the gateway path regardless of internal
     // RTG naming, since this has to match what the client actually requests
     // (config.ts's RTG_PATH is deliberately not renamed either — see there).
-    if (url.pathname === '/pdp/v2/ai/evaluation' && req.method === 'POST') {
+    if (url.pathname === '/pdp/ai/access/v1/ai/evaluation' && req.method === 'POST') {
       console.log('\n--- Reva mock RTG received a direct-AI request ---');
       console.log('headers:', JSON.stringify(redactedHeaders(req)));
       console.log('body:', JSON.stringify(parsed, null, 2));

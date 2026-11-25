@@ -5,20 +5,13 @@ import { skipOutsideCodeScope } from './runtimeScope';
 import { clearSessionModel } from './sessionModel';
 import { readStdin } from './stdin';
 
-// SessionEnd has no blocking/decision control (same as SessionStart) — it's
-// pure local cleanup, immediately removing this session from the active-
-// sessions registry (activeSessions.ts) rather than waiting out that file's
-// 10-minute TTL. Every termination reason Claude Code reports (clear/
-// resume/logout/prompt_input_exit/other) is treated the same: none of them
-// mean this session is still concurrently running, which is all that
-// registry tracks. Not guaranteed to fire on an abrupt termination (killed
-// process, closed terminal) — the TTL stays as the fallback for exactly
-// that gap; this is just the fast path for a graceful one. No RTG call, no
-// full loadConfig(): nothing here is worth a network round-trip against
-// Claude Code's tight, shared SessionEnd execution budget.
+// SessionEnd has no blocking/decision control (same as SessionStart) — local
+// cleanup only. Trace summarize belongs on Stop (end of a turn), not here.
+// Not guaranteed to fire on an abrupt termination.
 interface SessionEndInput {
   session_id: string;
   cwd: string;
+  transcript_path?: string;
   // Claude Code also sends a field naming why the session ended (clear/
   // resume/logout/prompt_input_exit/other) — not confirmed which literal
   // key carries it, and not needed here regardless, since every reason is
@@ -37,7 +30,7 @@ async function main(): Promise<void> {
   // else loadConfig() requires) to succeed first.
   const agentId = process.env.REVA_AGENT_ID || resolveAgentId();
   if (!agentId) {
-    debugLog('sessionEnd: skipped — no Anthropic account logged in and REVA_AGENT_ID not set');
+    debugLog('sessionEnd: skipped active-session cleanup — no Anthropic account logged in and REVA_AGENT_ID not set');
   } else {
     try {
       markSessionInactive(agentId, input.session_id, pluginDataDir);

@@ -46,7 +46,7 @@ const node_test_1 = require("node:test");
 const activeSessions_1 = require("../src/activeSessions");
 const PLUGIN_ROOT = path.resolve(__dirname, '../..');
 const HOOKS = JSON.parse(fs.readFileSync(path.join(PLUGIN_ROOT, 'hooks/hooks.json'), 'utf8')).hooks;
-const HOOK_NAMES = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse'];
+const HOOK_NAMES = ['SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'];
 const AUTHORIZATION_HOOKS = ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'];
 const SESSION_ID = 'surface-isolation-session';
 const AGENT_ID = 'surface-isolation-agent';
@@ -283,11 +283,11 @@ function assertAuthorizationOutput(hook, result, allowed) {
             for (const status of [200, 403]) {
                 await t.test(`${entrypoint ?? 'missing entrypoint'}: ${hook}, HTTP ${status}`, async () => {
                     f.response.status = status;
-                    const start = f.requests.filter((request) => request.url === '/pdp/v2/ai/evaluation').length;
+                    const start = f.requests.filter((request) => request.url === '/pdp/ai/access/v1/ai/evaluation').length;
                     const env = { ...f.env, CLAUDE_CODE_ENTRYPOINT: entrypoint, __CFBundleIdentifier: 'com.anthropic.claudefordesktop' };
                     const result = await runProcess(hookPath(hook), env, f.input(hook));
                     assertAuthorizationOutput(hook, result, status === 200);
-                    strict_1.default.equal(f.requests.filter((request) => request.url === '/pdp/v2/ai/evaluation').length, start + 1);
+                    strict_1.default.equal(f.requests.filter((request) => request.url === '/pdp/ai/access/v1/ai/evaluation').length, start + 1);
                 });
             }
         }
@@ -316,7 +316,7 @@ function assertAuthorizationOutput(hook, result, allowed) {
         const result = await runProcess(hookPath(hook), { ...f.env, CLAUDE_CODE_ENTRYPOINT: 'cli' }, f.input(hook, 'FutureCodeTool'));
         assertAuthorizationOutput(hook, result, false);
     }
-    strict_1.default.equal(f.requests.filter((request) => request.url === '/pdp/v2/ai/evaluation').length, 2);
+    strict_1.default.equal(f.requests.filter((request) => request.url === '/pdp/ai/access/v1/ai/evaluation').length, 2);
 });
 (0, node_test_1.test)('explicit Code or unknown entrypoints remain governed despite an inherited Cowork marker', async (t) => {
     const f = await fixture(t);
@@ -331,5 +331,32 @@ function assertAuthorizationOutput(hook, result, allowed) {
             evaluations += 1;
         }
     }
-    strict_1.default.equal(f.requests.filter((request) => request.url === '/pdp/v2/ai/evaluation').length, evaluations);
+    strict_1.default.equal(f.requests.filter((request) => request.url === '/pdp/ai/access/v1/ai/evaluation').length, evaluations);
+});
+(0, node_test_1.test)('the submitted prompt reaches Reva but is never written anywhere on the machine', async (t) => {
+    const f = await fixture(t);
+    f.response.status = 200;
+    const marker = 'MARKER-5f3a9c-this-prompt-text-must-not-be-stored';
+    const env = { ...f.env, CLAUDE_CODE_ENTRYPOINT: 'cli' };
+    for (const hook of AUTHORIZATION_HOOKS) {
+        const payload = JSON.stringify({ ...JSON.parse(f.input(hook)), prompt: marker });
+        assertAuthorizationOutput(hook, await runProcess(hookPath(hook), env, payload), true);
+    }
+    const evaluations = f.requests.filter((request) => request.url === '/pdp/ai/access/v1/ai/evaluation');
+    strict_1.default.ok(evaluations.some((request) => request.body.includes(marker)), 'the prompt is sent to Reva as the invokeAgent userQuery');
+    const turnFile = path.join(f.root, 'plugin-data', 'turns', `${SESSION_ID}.json`);
+    strict_1.default.ok(fs.existsSync(turnFile), 'the turn cache was written, so the scan below is not vacuous');
+    const files = [];
+    (function visit(dir) {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory())
+                visit(fullPath);
+            else
+                files.push(fullPath);
+        }
+    })(f.root);
+    for (const file of files) {
+        strict_1.default.ok(!fs.readFileSync(file, 'utf8').includes(marker), `${path.relative(f.root, file)} holds the submitted prompt text`);
+    }
 });

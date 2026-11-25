@@ -53,6 +53,8 @@ async function withTempDir(fn) {
 }
 const baseCfg = {
     rtgUrl: 'https://rtg.test/rtg/v2/ai/evaluation',
+    pluginVersionUrl: 'https://rtg.test/pdp/ai/access/ai/plugin/version',
+    summarizeUrl: 'https://rtg.test/pdp/ai/access/v1/ai/trace/summarize',
     authorization: 'test-token',
     agentId: 'agent-a',
     timeoutMs: 1000,
@@ -67,16 +69,6 @@ const baseRequest = {
     resource: { type: 'Tool', id: 'WebFetch', properties: { name: 'WebFetch' } },
     context: {
         timestamp: 1,
-        prompt: 'find docs',
-        hops: [
-            {
-                seq: 1,
-                subject: { type: 'User', id: 'alice@example.com' },
-                action: { name: 'invokeAgent' },
-                resource: { type: 'Agent', id: 'agent-a' },
-                time: '2026-08-19T10:00:00Z',
-            },
-        ],
     },
     transmission: {
         promptKey: 'userQuery',
@@ -84,7 +76,7 @@ const baseRequest = {
         role: 'assistant',
         contentType: 'text/plain',
     },
-    session: { id: 'sess-1', turn: 1, startedAt: '2026-08-19T10:00:00Z' },
+    session: { id: 'sess-1' },
 };
 async function withFetch(impl, fn) {
     const original = globalThis.fetch;
@@ -322,9 +314,11 @@ async function withFetch(impl, fn) {
     strict_1.default.equal(headers?.['X-Reva-Verification-Codes'], 'CODE_USER_SCOPE');
     strict_1.default.equal(headers?.Authorization, undefined);
     strict_1.default.equal(body.transmission.promptKey, 'userQuery');
-    strict_1.default.deepEqual(body.context.hops[0].action, { name: 'invokeAgent' });
+    strict_1.default.equal('hops' in body.context, false);
+    strict_1.default.equal('conversation' in body.context, false);
     strict_1.default.deepEqual(body.session, baseRequest.session);
     strict_1.default.equal('messages' in body.session, false);
+    strict_1.default.equal('turn' in body.session, false);
     strict_1.default.equal('entities' in body, false);
     strict_1.default.equal('hops' in body, false);
 });

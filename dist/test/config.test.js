@@ -15,7 +15,7 @@ const config_1 = require("../src/config");
 const TOKEN_ENV = { REVA_AUTH_TOKEN: 'auth-token', REVA_AGENT_ID: 'agent-a' };
 (0, node_test_1.test)('uses the default auth host when REVA_HOST is unset', () => {
     const cfg = (0, config_1.loadConfig)(TOKEN_ENV);
-    strict_1.default.equal(cfg.rtgUrl, `https://${config_1.DEFAULT_HOST}/pdp/v2/ai/evaluation`);
+    strict_1.default.equal(cfg.rtgUrl, `https://${config_1.DEFAULT_HOST}/pdp/ai/access/v1/ai/evaluation`);
     strict_1.default.equal(cfg.ingestionUrl, `https://${config_1.DEFAULT_HOST}/ingestion/v2`);
 });
 (0, node_test_1.test)('REVA_HOST overrides the default host', () => {
@@ -23,7 +23,10 @@ const TOKEN_ENV = { REVA_AUTH_TOKEN: 'auth-token', REVA_AGENT_ID: 'agent-a' };
         ...TOKEN_ENV,
         REVA_HOST: 'localhost:8787',
     });
-    strict_1.default.equal(cfg.rtgUrl, 'http://localhost:8787/pdp/v2/ai/evaluation');
+    // Local host uses http; paths are always the gateway aliases.
+    strict_1.default.equal(cfg.rtgUrl, 'http://localhost:8787/pdp/ai/access/v1/ai/evaluation');
+    strict_1.default.equal(cfg.pluginVersionUrl, 'http://localhost:8787/pdp/ai/access/ai/plugin/version');
+    strict_1.default.equal(cfg.summarizeUrl, 'http://localhost:8787/pdp/ai/access/v1/ai/trace/summarize');
     strict_1.default.equal(cfg.ingestionUrl, 'http://localhost:8787/ingestion/v2');
 });
 (0, node_test_1.test)('throws when REVA_AUTH_TOKEN is missing', () => {
@@ -40,7 +43,7 @@ const TOKEN_ENV = { REVA_AUTH_TOKEN: 'auth-token', REVA_AGENT_ID: 'agent-a' };
         CLAUDE_PLUGIN_OPTION_AUTH_TOKEN: 'from-option-auth',
     });
     strict_1.default.equal(cfg.authorization, 'from-option-auth');
-    strict_1.default.equal(cfg.rtgUrl, `https://${config_1.DEFAULT_HOST}/pdp/v2/ai/evaluation`);
+    strict_1.default.equal(cfg.rtgUrl, `https://${config_1.DEFAULT_HOST}/pdp/ai/access/v1/ai/evaluation`);
 });
 (0, node_test_1.test)('an explicit REVA_* var wins over the CLAUDE_PLUGIN_OPTION_* one when both are set', () => {
     const cfg = (0, config_1.loadConfig)({
@@ -49,20 +52,12 @@ const TOKEN_ENV = { REVA_AUTH_TOKEN: 'auth-token', REVA_AGENT_ID: 'agent-a' };
     });
     strict_1.default.equal(cfg.authorization, 'auth-token');
 });
-(0, node_test_1.test)('REVA_HOST uses https for non-local hosts', () => {
-    const cfg = (0, config_1.loadConfig)({
-        ...TOKEN_ENV,
-        REVA_HOST: 'api.tenant.example.com',
-    });
-    strict_1.default.equal(cfg.rtgUrl, 'https://api.tenant.example.com/pdp/v2/ai/evaluation');
-    strict_1.default.equal(cfg.ingestionUrl, 'https://api.tenant.example.com/ingestion/v2');
-});
 (0, node_test_1.test)('host comes from the install-dialog option when REVA_HOST is absent', () => {
     const cfg = (0, config_1.loadConfig)({
         ...TOKEN_ENV,
         CLAUDE_PLUGIN_OPTION_HOST: 'api.example.reva.ai',
     });
-    strict_1.default.equal(cfg.rtgUrl, 'https://api.example.reva.ai/pdp/v2/ai/evaluation');
+    strict_1.default.equal(cfg.rtgUrl, 'https://api.example.reva.ai/pdp/ai/access/v1/ai/evaluation');
 });
 (0, node_test_1.test)('REVA_HOST takes priority over the install-dialog option', () => {
     const cfg = (0, config_1.loadConfig)({
@@ -70,7 +65,15 @@ const TOKEN_ENV = { REVA_AUTH_TOKEN: 'auth-token', REVA_AGENT_ID: 'agent-a' };
         REVA_HOST: 'api.example.reva.ai',
         CLAUDE_PLUGIN_OPTION_HOST: 'ignored.example.com',
     });
-    strict_1.default.equal(cfg.rtgUrl, 'https://api.example.reva.ai/pdp/v2/ai/evaluation');
+    strict_1.default.equal(cfg.rtgUrl, 'https://api.example.reva.ai/pdp/ai/access/v1/ai/evaluation');
+});
+(0, node_test_1.test)('REVA_HOST uses https for non-local hosts', () => {
+    const cfg = (0, config_1.loadConfig)({
+        ...TOKEN_ENV,
+        REVA_HOST: 'api.tenant.example.com',
+    });
+    strict_1.default.equal(cfg.rtgUrl, 'https://api.tenant.example.com/pdp/ai/access/v1/ai/evaluation');
+    strict_1.default.equal(cfg.ingestionUrl, 'https://api.tenant.example.com/ingestion/v2');
 });
 (0, node_test_1.test)('timeouts still have working defaults — not part of the required/error-if-missing set', () => {
     const cfg = (0, config_1.loadConfig)(TOKEN_ENV);

@@ -1,20 +1,24 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { deriveTraceId, mintTraceId } from './trace';
-import { DirectEvalConversationMessage, DirectEvalSession } from './types';
+import { DirectEvalSession } from './types';
 
-// PreToolUse hooks don't receive the user's prompt text directly — only
-// UserPromptSubmit does — and each hook invocation is a separate stateless
-// process, so there's no in-memory way to share state between them.
+// Each hook invocation is a separate stateless process, so there's no
+// in-memory way to share state between them. This cache pins the TRACE id
+// for an entire turn: rather than trusting Claude Code's own prompt_id to
+// reliably distinguish turns in every mode (it works via `-p --resume`, but
+// is not confirmed identical in an interactive session), UserPromptSubmit
+// mints its own fresh id here and every PreToolUse call in that turn reads
+// the same value back — the plugin owns the turn boundary itself instead of
+// relying on an upstream field we don't fully control. Span ids are no
+// longer stored: they are derived per operation from this trace id (see
+// trace.ts).
 //
-// Also used to pin the TRACE id for an entire turn: rather than trusting
-// Claude Code's own prompt_id to reliably distinguish turns in every mode
-// (it works via `-p --resume`, but is not guaranteed identical in an
-// interactive session), UserPromptSubmit mints its own
-// fresh id here and every PreToolUse call in that turn reads the same
-// value back — the plugin owns the turn boundary itself instead of relying
-// on an upstream field we don't fully control. Span ids are no longer
-// stored: they are derived per operation from this trace id (see trace.ts).
+// Never stores prompt text. The prompt is evaluated once, at
+// UserPromptSubmit, and sent to Reva as the invokeAgent userQuery; nothing
+// later needs it, so no copy is kept on the machine. An entry written by an
+// earlier version may still carry a `prompt` field: loadTurn drops it, and
+// the next startTurn overwrites the file without it.
 //
 // Best-effort throughout: if the cache can't be written or read, actions
 // just proceed without turn-scoped context rather than failing.
@@ -26,15 +30,13 @@ export interface TurnCacheEntry {
   // new one. Optional only because entries written before this field
   // existed will not have it; see resolveTurnTraceId for that fallback.
   traceId?: string;
-  prompt?: string;
   promptTimestamp: string;
   turn: number;
   startedAt: string;
 }
 
-// Sent as the invokeAgent userQuery and again as context.conversation on every
-// tool call in the turn. An RTG 413 fails open for that request, so raise this
-// only after confirming the RTG accepts the resulting request size.
+// Sent as the invokeAgent userQuery. An RTG 413 fails open for that request,
+// so raise this only after confirming the RTG accepts the resulting request size.
 const MAX_PROMPT_LENGTH = 10000;
 
 // No fallback: only ever writes inside CLAUDE_PLUGIN_DATA (Claude Code's
@@ -104,7 +106,7 @@ function saveTurn(sessionId: string, entry: TurnCacheEntry, pluginDataDir?: stri
   }
 }
 
-export function startTurn(sessionId: string, prompt: string | undefined, pluginDataDir?: string): TurnCacheEntry {
+export function startTurn(sessionId: string, pluginDataDir?: string): TurnCacheEntry {
   const previous = loadTurn(sessionId, pluginDataDir);
   const observedAt = new Date().toISOString();
   const turn = (previous?.turn || 0) + 1;
@@ -118,7 +120,6 @@ export function startTurn(sessionId: string, prompt: string | undefined, pluginD
   const traceId = cacheFile(sessionId, pluginDataDir) ? mintTraceId() : deriveTraceId(sessionId, turn);
   const entry: TurnCacheEntry = {
     traceId,
-    ...(prompt ? { prompt: truncatePrompt(prompt) } : {}),
     promptTimestamp: observedAt,
     turn,
     startedAt: previous?.startedAt || observedAt,
@@ -132,7 +133,10 @@ export function loadTurn(sessionId: string, pluginDataDir?: string): TurnCacheEn
   if (!file) return undefined;
   try {
     const raw = fs.readFileSync(file, 'utf8');
-    return JSON.parse(raw) as TurnCacheEntry;
+    // `prompt` is what earlier versions stored here. Dropped on read so no
+    // caller can carry it forward into a new entry.
+    const { prompt: _legacyPrompt, ...entry } = JSON.parse(raw) as TurnCacheEntry & { prompt?: unknown };
+    return entry;
   } catch {
     return undefined;
   }
@@ -144,24 +148,12 @@ export function loadTurn(sessionId: string, pluginDataDir?: string): TurnCacheEn
 export function loadOrStartTurn(sessionId: string, pluginDataDir?: string): TurnCacheEntry {
   const existing = loadTurn(sessionId, pluginDataDir);
   if (existing?.turn && existing.startedAt && existing.promptTimestamp) return existing;
-  return startTurn(sessionId, existing?.prompt, pluginDataDir);
+  return startTurn(sessionId, pluginDataDir);
 }
 
-export function directSessionFromTurn(sessionId: string, turn: TurnCacheEntry): DirectEvalSession {
-  return { id: sessionId, turn: turn.turn, startedAt: turn.startedAt };
-}
-
-export function conversationFromTurn(turn: TurnCacheEntry): DirectEvalConversationMessage[] {
-  if (!turn.prompt?.trim()) return [];
-  return [
-    {
-      seq: 1,
-      role: 'user',
-      contentType: 'text/plain',
-      content: turn.prompt,
-      timestamp: turn.promptTimestamp,
-    },
-  ];
+// RTG only needs the thread id on the evaluate body; turn/startedAt are local.
+export function directSessionFromTurn(sessionId: string, _turn?: TurnCacheEntry): DirectEvalSession {
+  return { id: sessionId };
 }
 
 // The trace id every hook in this turn must agree on. Normally read straight
